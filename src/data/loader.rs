@@ -45,11 +45,18 @@ struct InstanceAcc {
     rue2: String,
     direction: String,
     color_idx: usize,
-    volumes: BTreeMap<i64, f64>,
+    /// Hourly records (agg_code = "h") keyed by exact UTC timestamp.
+    /// Preferred over daily when any exist.
+    hourly: BTreeMap<i64, f64>,
+    /// Daily records (agg_code = "d") keyed by UTC midnight timestamp.
+    /// Used only as fallback when no hourly records exist for this instance.
+    daily: BTreeMap<i64, f64>,
 }
 
 /// Parse the City of Montreal cyclistes CSV.
-/// Only `agg_code = "d"` (daily) rows are used.
+/// Accepts agg_code "h" (hourly) and "d" (daily).
+/// Hourly records are preferred; daily are kept only as a fallback for
+/// instances that have no hourly rows, preventing double-counting.
 /// One `DataSource` per unique `(instance, direction)` pair.
 pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRecord>) {
     let mut lines = text.lines();
@@ -75,14 +82,16 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
         let fields = split_csv_line(line);
         let get = |col: usize| fields.get(col).map(|s| s.trim().to_string()).unwrap_or_default();
 
-        if get(agg_col) != "d" { continue; }
+        let agg = get(agg_col);
+        // Accept hourly ("h") and daily ("d") only; skip 15-min, monthly, annual
+        if agg != "h" && agg != "d" { continue; }
 
         let instance  = get(instance_col);
         let direction = direction_col.map(|c| get(c)).unwrap_or_default();
         if instance.is_empty() { continue; }
 
-        let lat: f64 = match get(lat_col).parse()    { Ok(v) => v, Err(_) => continue };
-        let lon: f64 = match get(lon_col).parse()    { Ok(v) => v, Err(_) => continue };
+        let lat: f64 = match get(lat_col).parse()       { Ok(v) => v, Err(_) => continue };
+        let lon: f64 = match get(lon_col).parse()       { Ok(v) => v, Err(_) => continue };
         let volume: f64 = match get(volume_col).parse() { Ok(v) => v, Err(_) => continue };
         let ts = match parse_montreal_ts(&get(periode_col)) { Some(t) => t, None => continue };
 
@@ -98,16 +107,23 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
             if !ok { continue; }
         }
 
-        let day_key = ts.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
         let key = (instance.clone(), direction.clone());
         let acc = instances.entry(key).or_insert_with(|| {
             let idx = color_counter % SOURCE_COLORS.len();
             color_counter += 1;
             InstanceAcc { lat, lon, rue1: rue1.clone(), rue2: rue2.clone(),
                           direction: direction.clone(), color_idx: idx,
-                          volumes: BTreeMap::new() }
+                          hourly: BTreeMap::new(), daily: BTreeMap::new() }
         });
-        *acc.volumes.entry(day_key).or_insert(0.0) += volume;
+
+        if agg == "h" {
+            // Store at exact hourly timestamp
+            *acc.hourly.entry(ts.timestamp()).or_insert(0.0) += volume;
+        } else {
+            // Store daily at UTC midnight
+            let day_key = ts.date_naive().and_hms_opt(0,0,0).unwrap().and_utc().timestamp();
+            *acc.daily.entry(day_key).or_insert(0.0) += volume;
+        }
     }
 
     let mut sources = Vec::with_capacity(instances.len());
@@ -116,7 +132,10 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
     list.sort_by(|a, b| a.0.cmp(&b.0));
 
     for ((instance_id, direction), acc) in list {
-        if acc.volumes.is_empty() { continue; }
+        // Prefer hourly records; fall back to daily if no hourly exist
+        let chosen = if !acc.hourly.is_empty() { &acc.hourly } else { &acc.daily };
+        if chosen.is_empty() { continue; }
+
         let dir_slug = direction.to_lowercase().replace(' ', "-");
         let source_id = if dir_slug.is_empty() {
             format!("mtl-{}", instance_id)
@@ -130,8 +149,8 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
             (true,  true)  => format!("Mtl: {}",             acc.rue1),
         };
 
-        let earliest = DateTime::from_timestamp(*acc.volumes.keys().next().unwrap(), 0).unwrap();
-        let latest   = DateTime::from_timestamp(*acc.volumes.keys().next_back().unwrap(), 0).unwrap();
+        let earliest = DateTime::from_timestamp(*chosen.keys().next().unwrap(), 0).unwrap();
+        let latest   = DateTime::from_timestamp(*chosen.keys().next_back().unwrap(), 0).unwrap();
 
         sources.push(DataSource {
             id: source_id.clone(), name,
@@ -141,7 +160,7 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
             color: SOURCE_COLORS[acc.color_idx].to_string(),
             loader_type: LoaderType::Discovered,
         });
-        for (ts_unix, total) in &acc.volumes {
+        for (ts_unix, total) in chosen {
             records.push(CountRecord {
                 timestamp: DateTime::from_timestamp(*ts_unix, 0).unwrap(),
                 modality:  Modality::Bikes,
