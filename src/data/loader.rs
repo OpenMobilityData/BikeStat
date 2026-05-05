@@ -1,90 +1,229 @@
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
-use crate::data::types::{CountRecord, Modality};
+use std::collections::{BTreeMap, HashMap};
 
-/// Parse a CSV from the Vancouver Open Data Eco-Totem format.
-/// Expected columns: Date, Hour, Bike_Count, Pedestrian_Count  (header row required)
-pub fn parse_eco_totem_csv(source_id: &str, csv_text: &str) -> Vec<CountRecord> {
-    let mut records = Vec::new();
-    let mut lines = csv_text.lines();
-    let Some(header) = lines.next() else { return records };
+use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Utc};
 
-    let cols: Vec<&str> = header.split(',').collect();
-    let find = |name: &str| cols.iter().position(|&c| c.trim().eq_ignore_ascii_case(name));
+use crate::data::sources::{MONTREAL_CYCLISTES_URL, SOURCE_COLORS};
+use crate::data::types::{CountRecord, DataSource, LatLon, LoaderType, Modality, Resolution};
 
-    let Some(date_col) = find("date") else { return records };
-    let Some(hour_col) = find("hour") else { return records };
-    let bike_col = find("bike_count");
-    let ped_col  = find("pedestrian_count");
+// ── CSV helpers ──────────────────────────────────────────────────────────────
 
-    for line in lines {
-        let fields: Vec<&str> = line.split(',').collect();
-        if fields.len() <= date_col.max(hour_col) { continue; }
-
-        let date_str = fields[date_col].trim();
-        let hour_str = fields[hour_col].trim();
-        let Ok(hour): Result<u32, _> = hour_str.parse() else { continue };
-
-        let datetime_str = format!("{} {:02}:00:00", date_str, hour);
-        let Ok(ndt) = NaiveDateTime::parse_from_str(&datetime_str, "%Y-%m-%d %H:%M:%S") else {
-            continue
-        };
-        let ts: DateTime<Utc> = Utc.from_utc_datetime(&ndt);
-
-        let push = |records: &mut Vec<CountRecord>, modality: Modality, col: usize| {
-            if let Ok(count) = fields.get(col).unwrap_or(&"").trim().parse::<f64>() {
-                records.push(CountRecord { timestamp: ts, modality, count, source_id: source_id.to_string() });
-            }
-        };
-
-        if let Some(c) = bike_col { push(&mut records, Modality::Bikes, c); }
-        if let Some(c) = ped_col  { push(&mut records, Modality::Pedestrians, c); }
+/// Split one CSV line into fields, respecting double-quote enclosures.
+fn split_csv_line(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    for c in line.chars() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            ',' if !in_quotes => { fields.push(std::mem::take(&mut field)); }
+            _ => field.push(c),
+        }
     }
-    records
+    fields.push(field);
+    fields
 }
 
-/// Aggregate raw records into buckets determined by resolution.
-/// Returns (bucket_start_ms, total) pairs suitable for chart rendering.
+/// Find a column index by case-insensitive name match.
+fn find_col(headers: &[String], name: &str) -> Option<usize> {
+    headers.iter().position(|h| h.trim().eq_ignore_ascii_case(name))
+}
+
+/// Parse Montreal's periode timestamp: `"2025-11-04 00:00:00-05"`.
+/// Normalises the short UTC offset (`-05`) to `±HH:MM` before handing to chrono.
+fn parse_montreal_ts(s: &str) -> Option<DateTime<Utc>> {
+    let s = s.trim();
+    // "YYYY-MM-DD HH:MM:SS±HH" → append ":00" to make ±HH:MM
+    let normalised = if s.len() == 22 {
+        format!("{}:00", s)
+    } else {
+        s.to_string()
+    };
+    DateTime::parse_from_str(&normalised, "%Y-%m-%d %H:%M:%S%:z")
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+// ── Montreal Cyclistes CSV ───────────────────────────────────────────────────
+
+struct InstanceAcc {
+    lat: f64,
+    lon: f64,
+    name: String,            // "rue_1 @ rue_2"
+    color_idx: usize,
+    /// Accumulated daily volumes keyed by Unix timestamp (UTC midnight of the day).
+    volumes: BTreeMap<i64, f64>,
+}
+
+/// Parse the City of Montreal cyclistes CSV.
+/// Returns discovered `DataSource` entries plus `CountRecord`s (bikes only).
+///
+/// One URL contains data for all counters; each unique `instance` value becomes
+/// a separate `DataSource`. Volumes are summed across directions and lanes for
+/// the same counter on the same day.
+pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRecord>) {
+    let mut lines = text.lines();
+    let Some(header_line) = lines.next() else { return (vec![], vec![]) };
+
+    let headers: Vec<String> = split_csv_line(header_line);
+
+    let Some(instance_col)  = find_col(&headers, "instance")  else { return (vec![], vec![]) };
+    let Some(lat_col)       = find_col(&headers, "latitude")   else { return (vec![], vec![]) };
+    let Some(lon_col)       = find_col(&headers, "longitude")  else { return (vec![], vec![]) };
+    let Some(periode_col)   = find_col(&headers, "periode")    else { return (vec![], vec![]) };
+    let Some(volume_col)    = find_col(&headers, "volume")     else { return (vec![], vec![]) };
+    let rue1_col = find_col(&headers, "rue_1");
+    let rue2_col = find_col(&headers, "rue_2");
+
+    let mut instances: HashMap<String, InstanceAcc> = HashMap::new();
+    let mut color_counter = 0usize;
+
+    for line in lines {
+        if line.trim().is_empty() { continue; }
+        let fields = split_csv_line(line);
+
+        let get = |col: usize| fields.get(col).map(|s| s.trim().to_string()).unwrap_or_default();
+
+        let instance = get(instance_col);
+        if instance.is_empty() { continue; }
+
+        let lat: f64 = match get(lat_col).parse() { Ok(v) => v, Err(_) => continue };
+        let lon: f64 = match get(lon_col).parse() { Ok(v) => v, Err(_) => continue };
+
+        let ts = match parse_montreal_ts(&get(periode_col)) { Some(t) => t, None => continue };
+        let volume: f64 = match get(volume_col).parse() { Ok(v) => v, Err(_) => continue };
+
+        // Bucket to UTC day (keyed by Unix timestamp of day start in UTC)
+        let day_key = ts.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+
+        let acc = instances.entry(instance.clone()).or_insert_with(|| {
+            let rue1 = rue1_col.map(|c| get(c)).unwrap_or_default();
+            let rue2 = rue2_col.map(|c| get(c)).unwrap_or_default();
+            let name = if rue2.is_empty() {
+                format!("Mtl: {}", rue1)
+            } else {
+                format!("Mtl: {} @ {}", rue1, rue2)
+            };
+            let idx = color_counter % SOURCE_COLORS.len();
+            color_counter += 1;
+            InstanceAcc { lat, lon, name, color_idx: idx, volumes: BTreeMap::new() }
+        });
+
+        *acc.volumes.entry(day_key).or_insert(0.0) += volume;
+    }
+
+    let mut sources = Vec::with_capacity(instances.len());
+    let mut records = Vec::new();
+
+    // Sort instances by name for stable ordering
+    let mut instance_list: Vec<(String, InstanceAcc)> = instances.into_iter().collect();
+    instance_list.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (instance_id, acc) in instance_list {
+        if acc.volumes.is_empty() { continue; }
+
+        let source_id = format!("mtl-{}", instance_id);
+
+        let earliest = DateTime::from_timestamp(*acc.volumes.keys().next().unwrap(), 0).unwrap();
+        let latest   = DateTime::from_timestamp(*acc.volumes.keys().next_back().unwrap(), 0).unwrap();
+
+        sources.push(DataSource {
+            id:           source_id.clone(),
+            name:         acc.name,
+            location:     LatLon { lat: acc.lat, lon: acc.lon },
+            modalities:   vec![Modality::Bikes],
+            earliest,
+            latest,
+            color:        SOURCE_COLORS[acc.color_idx].to_string(),
+            loader_type:  LoaderType::Discovered,
+        });
+
+        for (ts_unix, total) in &acc.volumes {
+            records.push(CountRecord {
+                timestamp: DateTime::from_timestamp(*ts_unix, 0).unwrap(),
+                modality:  Modality::Bikes,
+                count:     *total,
+                source_id: source_id.clone(),
+            });
+        }
+    }
+
+    (sources, records)
+}
+
+/// Fetch the Montreal cyclistes CSV and parse it.
+pub async fn fetch_montreal_cyclistes() -> Result<(Vec<DataSource>, Vec<CountRecord>), String> {
+    let resp = gloo_net::http::Request::get(MONTREAL_CYCLISTES_URL)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {:?}", e))?;
+
+    if !resp.ok() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+
+    let text = resp.text().await.map_err(|e| format!("Body error: {:?}", e))?;
+    Ok(parse_montreal_cyclistes_csv(&text))
+}
+
+// ── Telraam S2 Excel ─────────────────────────────────────────────────────────
+//
+// Telraam S2 Excel exports are not yet implemented — awaiting example files.
+//
+// Expected column layout (names are detected case-insensitively):
+//   date / datetime / timestamp  — date or date+hour
+//   hour                         — present when date-only column used
+//   pedestrian / ped             — pedestrian count
+//   bike / cyclist               — bicycle count
+//   car / motorized              — car count
+//   heavy / truck                — heavy vehicle count
+//
+// Once an example file is available, implement:
+//
+//   pub fn parse_telraam_excel(source_id: &str, bytes: &[u8]) -> Vec<CountRecord> { ... }
+//
+//   pub async fn fetch_telraam_excel(source_id: &str, url: &str) -> Result<Vec<CountRecord>, String> {
+//       let bytes = gloo_net::http::Request::get(url).send().await...bytes().await...;
+//       Ok(parse_telraam_excel(source_id, &bytes))
+//   }
+
+// ── Aggregation ──────────────────────────────────────────────────────────────
+
+/// Group records by time bucket and sum counts.
+/// If `source_id` is given only that source is included; otherwise all.
 pub fn aggregate(
     records: &[CountRecord],
     modality: Modality,
-    resolution: crate::data::types::Resolution,
+    resolution: Resolution,
     source_id: Option<&str>,
 ) -> Vec<(DateTime<Utc>, f64)> {
-    use std::collections::BTreeMap;
-    use crate::data::types::Resolution;
-
-    let filtered = records.iter().filter(|r| {
-        r.modality == modality && source_id.map_or(true, |id| r.source_id == id)
-    });
-
     let mut buckets: BTreeMap<i64, f64> = BTreeMap::new();
-    for rec in filtered {
-        let bucket = bucket_key(rec.timestamp, resolution);
-        *buckets.entry(bucket).or_insert(0.0) += rec.count;
+
+    for rec in records {
+        if rec.modality != modality { continue; }
+        if source_id.map_or(false, |id| rec.source_id != id) { continue; }
+        let key = bucket_key(rec.timestamp, resolution);
+        *buckets.entry(key).or_insert(0.0) += rec.count;
     }
 
     buckets.into_iter()
-        .filter_map(|(k, v)| {
-            DateTime::from_timestamp(k, 0).map(|dt| (dt, v))
-        })
+        .filter_map(|(k, v)| DateTime::from_timestamp(k, 0).map(|dt| (dt, v)))
         .collect()
 }
 
-fn bucket_key(ts: DateTime<Utc>, res: crate::data::types::Resolution) -> i64 {
-    use crate::data::types::Resolution;
-    use chrono::{Datelike, Timelike};
+fn bucket_key(ts: DateTime<Utc>, res: Resolution) -> i64 {
+    use chrono::Timelike;
     match res {
-        Resolution::Hour  => ts.with_minute(0).unwrap().with_second(0).unwrap().timestamp(),
-        Resolution::Day   => ts.date_naive().and_hms_opt(0,0,0).unwrap()
-                               .and_utc().timestamp(),
-        Resolution::Week  => {
+        Resolution::Hour => ts
+            .with_minute(0).unwrap().with_second(0).unwrap().with_nanosecond(0).unwrap()
+            .timestamp(),
+        Resolution::Day => ts.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
+        Resolution::Week => {
             let dow = ts.weekday().num_days_from_monday();
             (ts.date_naive() - chrono::Duration::days(dow as i64))
-                .and_hms_opt(0,0,0).unwrap().and_utc().timestamp()
+                .and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp()
         }
-        Resolution::Month => {
-            ts.date_naive().with_day(1).unwrap()
-              .and_hms_opt(0,0,0).unwrap().and_utc().timestamp()
-        }
+        Resolution::Month => ts
+            .date_naive().with_day(1).unwrap()
+            .and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
     }
 }

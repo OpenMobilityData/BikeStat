@@ -53,6 +53,12 @@ header .subtitle {
     font-size: 0.8rem;
 }
 
+header .load-status {
+    margin-left: auto;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
 /* ── Sidebar ── */
 aside {
     grid-area: sidebar;

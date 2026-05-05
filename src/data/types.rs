@@ -13,55 +13,43 @@ pub enum Modality {
 impl Modality {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Bikes => "Bikes",
+            Self::Bikes       => "Bikes",
             Self::Pedestrians => "Pedestrians",
-            Self::Cars => "Cars",
-            Self::Trucks => "Trucks",
+            Self::Cars        => "Cars",
+            Self::Trucks      => "Trucks",
             Self::Motorcycles => "Motorcycles",
         }
     }
 
     pub fn color(&self) -> &'static str {
         match self {
-            Self::Bikes => "#e94560",
+            Self::Bikes       => "#e94560",
             Self::Pedestrians => "#f5a623",
-            Self::Cars => "#4a9eff",
-            Self::Trucks => "#7ed321",
+            Self::Cars        => "#4a9eff",
+            Self::Trucks      => "#7ed321",
             Self::Motorcycles => "#bd10e0",
         }
     }
 
     pub fn all() -> &'static [Modality] {
-        &[
-            Self::Bikes,
-            Self::Pedestrians,
-            Self::Cars,
-            Self::Trucks,
-            Self::Motorcycles,
-        ]
+        &[Self::Bikes, Self::Pedestrians, Self::Cars, Self::Trucks, Self::Motorcycles]
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Resolution {
-    Hour,
-    Day,
-    Week,
-    Month,
-}
+pub enum Resolution { Hour, Day, Week, Month }
 
 impl Resolution {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Hour => "Hour",
-            Self::Day => "Day",
-            Self::Week => "Week",
+            Self::Hour  => "Hour",
+            Self::Day   => "Day",
+            Self::Week  => "Week",
             Self::Month => "Month",
         }
     }
 }
 
-/// A single count record from a data source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CountRecord {
     pub timestamp: DateTime<Utc>,
@@ -70,14 +58,28 @@ pub struct CountRecord {
     pub source_id: String,
 }
 
-/// Geographic location of a counting station.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LatLon {
     pub lat: f64,
     pub lon: f64,
 }
 
-/// Metadata about a data source/counting station.
+/// Describes how a source's records are (or will be) loaded.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum LoaderType {
+    /// Records already in memory (e.g. discovered from a multi-source CSV feed).
+    Discovered,
+    /// Telraam S2 Excel exports served as static files.
+    /// `file_urls`: paths relative to app root, one per year,
+    /// e.g. `"data/telraam/seg-12345/2024.xlsx"`.
+    TelraamExcel {
+        segment_id: String,
+        file_urls: Vec<String>,
+    },
+    /// Telraam S2 live API (requires an API key configured server-side).
+    TelraamApi { segment_id: String },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataSource {
     pub id: String,
@@ -87,13 +89,5 @@ pub struct DataSource {
     pub earliest: DateTime<Utc>,
     pub latest: DateTime<Utc>,
     pub color: String,
-}
-
-/// Aggregated data point after grouping by resolution.
-#[derive(Debug, Clone)]
-pub struct AggPoint {
-    pub bucket_start: DateTime<Utc>,
-    pub modality: Modality,
-    pub source_id: String,
-    pub total: f64,
+    pub loader_type: LoaderType,
 }
