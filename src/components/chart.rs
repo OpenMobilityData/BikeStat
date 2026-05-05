@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use leptos::prelude::*;
-use crate::data::types::Modality;
 
 #[derive(Clone, PartialEq)]
 pub struct Series {

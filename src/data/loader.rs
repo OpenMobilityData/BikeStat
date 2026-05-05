@@ -1,8 +1,8 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
-use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Utc};
 
-use crate::data::sources::{MONTREAL_CYCLISTES_URL, SOURCE_COLORS};
+use crate::data::sources::{MONTREAL_CYCLISTES_URL, MONTREAL_LOCATION_FILTER, SOURCE_COLORS};
 use crate::data::types::{CountRecord, DataSource, LatLon, LoaderType, Modality, Resolution};
 
 // ── CSV helpers ──────────────────────────────────────────────────────────────
@@ -28,16 +28,12 @@ fn find_col(headers: &[String], name: &str) -> Option<usize> {
     headers.iter().position(|h| h.trim().eq_ignore_ascii_case(name))
 }
 
-/// Parse Montreal's periode timestamp: `"2025-11-04 00:00:00-05"`.
-/// Normalises the short UTC offset (`-05`) to `±HH:MM` before handing to chrono.
+/// Parse Montreal's `periode` timestamp: `"2025-11-04 00:00:00-05"`.
+/// Normalises the short UTC offset (`-05`) to `±HH:MM` for chrono.
 fn parse_montreal_ts(s: &str) -> Option<DateTime<Utc>> {
     let s = s.trim();
-    // "YYYY-MM-DD HH:MM:SS±HH" → append ":00" to make ±HH:MM
-    let normalised = if s.len() == 22 {
-        format!("{}:00", s)
-    } else {
-        s.to_string()
-    };
+    // "YYYY-MM-DD HH:MM:SS±HH"  →  "YYYY-MM-DD HH:MM:SS±HH:MM"
+    let normalised = if s.len() == 22 { format!("{}:00", s) } else { s.to_string() };
     DateTime::parse_from_str(&normalised, "%Y-%m-%d %H:%M:%S%:z")
         .ok()
         .map(|dt| dt.with_timezone(&Utc))
@@ -45,67 +41,89 @@ fn parse_montreal_ts(s: &str) -> Option<DateTime<Utc>> {
 
 // ── Montreal Cyclistes CSV ───────────────────────────────────────────────────
 
+/// Accumulator for one (instance, direction) pair while scanning the CSV.
 struct InstanceAcc {
     lat: f64,
     lon: f64,
-    name: String,            // "rue_1 @ rue_2"
+    rue1: String,
+    rue2: String,
+    direction: String,
     color_idx: usize,
-    /// Accumulated daily volumes keyed by Unix timestamp (UTC midnight of the day).
+    /// Daily volumes keyed by Unix timestamp of UTC midnight for that day.
     volumes: BTreeMap<i64, f64>,
 }
 
 /// Parse the City of Montreal cyclistes CSV.
-/// Returns discovered `DataSource` entries plus `CountRecord`s (bikes only).
 ///
-/// One URL contains data for all counters; each unique `instance` value becomes
-/// a separate `DataSource`. Volumes are summed across directions and lanes for
-/// the same counter on the same day.
+/// Only rows with `agg_code = "d"` (daily) are used, preventing double-counting
+/// when both hourly and daily records exist for the same counter.
+///
+/// One `DataSource` is created per unique `(instance, direction)` pair so the
+/// user can select individual directions independently.  If
+/// `MONTREAL_LOCATION_FILTER` is set, only matching intersections are included.
 pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRecord>) {
     let mut lines = text.lines();
     let Some(header_line) = lines.next() else { return (vec![], vec![]) };
 
     let headers: Vec<String> = split_csv_line(header_line);
 
-    let Some(instance_col)  = find_col(&headers, "instance")  else { return (vec![], vec![]) };
-    let Some(lat_col)       = find_col(&headers, "latitude")   else { return (vec![], vec![]) };
-    let Some(lon_col)       = find_col(&headers, "longitude")  else { return (vec![], vec![]) };
-    let Some(periode_col)   = find_col(&headers, "periode")    else { return (vec![], vec![]) };
-    let Some(volume_col)    = find_col(&headers, "volume")     else { return (vec![], vec![]) };
-    let rue1_col = find_col(&headers, "rue_1");
-    let rue2_col = find_col(&headers, "rue_2");
+    // Required columns
+    let Some(agg_col)      = find_col(&headers, "agg_code")  else { return (vec![], vec![]) };
+    let Some(instance_col) = find_col(&headers, "instance")  else { return (vec![], vec![]) };
+    let Some(lat_col)      = find_col(&headers, "latitude")  else { return (vec![], vec![]) };
+    let Some(lon_col)      = find_col(&headers, "longitude") else { return (vec![], vec![]) };
+    let Some(periode_col)  = find_col(&headers, "periode")   else { return (vec![], vec![]) };
+    let Some(volume_col)   = find_col(&headers, "volume")    else { return (vec![], vec![]) };
 
-    let mut instances: HashMap<String, InstanceAcc> = HashMap::new();
+    let rue1_col      = find_col(&headers, "rue_1");
+    let rue2_col      = find_col(&headers, "rue_2");
+    let direction_col = find_col(&headers, "direction");
+
+    // (instance_id, direction) → accumulator
+    let mut instances: std::collections::HashMap<(String, String), InstanceAcc>
+        = std::collections::HashMap::new();
     let mut color_counter = 0usize;
 
     for line in lines {
         if line.trim().is_empty() { continue; }
         let fields = split_csv_line(line);
-
         let get = |col: usize| fields.get(col).map(|s| s.trim().to_string()).unwrap_or_default();
 
-        let instance = get(instance_col);
+        // Only process daily-aggregated records
+        if get(agg_col) != "d" { continue; }
+
+        let instance  = get(instance_col);
+        let direction = direction_col.map(|c| get(c)).unwrap_or_default();
         if instance.is_empty() { continue; }
 
-        let lat: f64 = match get(lat_col).parse() { Ok(v) => v, Err(_) => continue };
-        let lon: f64 = match get(lon_col).parse() { Ok(v) => v, Err(_) => continue };
-
-        let ts = match parse_montreal_ts(&get(periode_col)) { Some(t) => t, None => continue };
+        let lat: f64 = match get(lat_col).parse()    { Ok(v) => v, Err(_) => continue };
+        let lon: f64 = match get(lon_col).parse()    { Ok(v) => v, Err(_) => continue };
         let volume: f64 = match get(volume_col).parse() { Ok(v) => v, Err(_) => continue };
+        let ts = match parse_montreal_ts(&get(periode_col)) { Some(t) => t, None => continue };
 
-        // Bucket to UTC day (keyed by Unix timestamp of day start in UTC)
+        let rue1 = rue1_col.map(|c| get(c)).unwrap_or_default();
+        let rue2 = rue2_col.map(|c| get(c)).unwrap_or_default();
+
+        // Apply location whitelist
+        if let Some(filters) = MONTREAL_LOCATION_FILTER {
+            let r1 = rue1.to_lowercase();
+            let r2 = rue2.to_lowercase();
+            let passes = filters.iter().any(|(f1, f2)| {
+                r1.contains(&f1.to_lowercase()) && r2.contains(&f2.to_lowercase())
+            });
+            if !passes { continue; }
+        }
+
+        // Bucket to the UTC day boundary
         let day_key = ts.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
 
-        let acc = instances.entry(instance.clone()).or_insert_with(|| {
-            let rue1 = rue1_col.map(|c| get(c)).unwrap_or_default();
-            let rue2 = rue2_col.map(|c| get(c)).unwrap_or_default();
-            let name = if rue2.is_empty() {
-                format!("Mtl: {}", rue1)
-            } else {
-                format!("Mtl: {} @ {}", rue1, rue2)
-            };
+        let key = (instance.clone(), direction.clone());
+        let acc = instances.entry(key).or_insert_with(|| {
             let idx = color_counter % SOURCE_COLORS.len();
             color_counter += 1;
-            InstanceAcc { lat, lon, name, color_idx: idx, volumes: BTreeMap::new() }
+            InstanceAcc { lat, lon, rue1: rue1.clone(), rue2: rue2.clone(),
+                          direction: direction.clone(), color_idx: idx,
+                          volumes: BTreeMap::new() }
         });
 
         *acc.volumes.entry(day_key).or_insert(0.0) += volume;
@@ -114,27 +132,41 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
     let mut sources = Vec::with_capacity(instances.len());
     let mut records = Vec::new();
 
-    // Sort instances by name for stable ordering
-    let mut instance_list: Vec<(String, InstanceAcc)> = instances.into_iter().collect();
-    instance_list.sort_by(|a, b| a.0.cmp(&b.0));
+    // Sort for stable ordering
+    let mut list: Vec<_> = instances.into_iter().collect();
+    list.sort_by(|a, b| a.0.cmp(&b.0));
 
-    for (instance_id, acc) in instance_list {
+    for ((instance_id, direction), acc) in list {
         if acc.volumes.is_empty() { continue; }
 
-        let source_id = format!("mtl-{}", instance_id);
+        // Unique source ID encodes both instance and direction
+        let dir_slug = direction.to_lowercase().replace(' ', "-");
+        let source_id = if dir_slug.is_empty() {
+            format!("mtl-{}", instance_id)
+        } else {
+            format!("mtl-{}-{}", instance_id, dir_slug)
+        };
+
+        // Human-readable name includes direction where it adds information
+        let name = match (acc.rue2.is_empty(), direction.is_empty()) {
+            (false, false) => format!("Mtl: {} @ {} ({})", acc.rue1, acc.rue2, direction),
+            (false, true)  => format!("Mtl: {} @ {}",      acc.rue1, acc.rue2),
+            (true,  false) => format!("Mtl: {} ({})",       acc.rue1, direction),
+            (true,  true)  => format!("Mtl: {}",             acc.rue1),
+        };
 
         let earliest = DateTime::from_timestamp(*acc.volumes.keys().next().unwrap(), 0).unwrap();
         let latest   = DateTime::from_timestamp(*acc.volumes.keys().next_back().unwrap(), 0).unwrap();
 
         sources.push(DataSource {
-            id:           source_id.clone(),
-            name:         acc.name,
-            location:     LatLon { lat: acc.lat, lon: acc.lon },
-            modalities:   vec![Modality::Bikes],
+            id: source_id.clone(),
+            name,
+            location: LatLon { lat: acc.lat, lon: acc.lon },
+            modalities: vec![Modality::Bikes],
             earliest,
             latest,
-            color:        SOURCE_COLORS[acc.color_idx].to_string(),
-            loader_type:  LoaderType::Discovered,
+            color: SOURCE_COLORS[acc.color_idx].to_string(),
+            loader_type: LoaderType::Discovered,
         });
 
         for (ts_unix, total) in &acc.volumes {
@@ -150,7 +182,7 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
     (sources, records)
 }
 
-/// Fetch the Montreal cyclistes CSV and parse it.
+/// Fetch the Montreal cyclistes CSV from the open data portal and parse it.
 pub async fn fetch_montreal_cyclistes() -> Result<(Vec<DataSource>, Vec<CountRecord>), String> {
     let resp = gloo_net::http::Request::get(MONTREAL_CYCLISTES_URL)
         .send()
@@ -167,29 +199,26 @@ pub async fn fetch_montreal_cyclistes() -> Result<(Vec<DataSource>, Vec<CountRec
 
 // ── Telraam S2 Excel ─────────────────────────────────────────────────────────
 //
-// Telraam S2 Excel exports are not yet implemented — awaiting example files.
+// Not yet implemented — awaiting example files.
 //
-// Expected column layout (names are detected case-insensitively):
-//   date / datetime / timestamp  — date or date+hour
-//   hour                         — present when date-only column used
-//   pedestrian / ped             — pedestrian count
-//   bike / cyclist               — bicycle count
-//   car / motorized              — car count
-//   heavy / truck                — heavy vehicle count
+// Expected column layout (detected case-insensitively):
+//   date / datetime / timestamp   — date or date+hour
+//   hour                          — when date-only column is used
+//   pedestrian / ped              — pedestrian count
+//   bike / cyclist                — bicycle count
+//   car / motorized               — car count
+//   heavy / truck                 — heavy-vehicle count
 //
 // Once an example file is available, implement:
 //
-//   pub fn parse_telraam_excel(source_id: &str, bytes: &[u8]) -> Vec<CountRecord> { ... }
+//   pub fn parse_telraam_excel(source_id: &str, bytes: &[u8]) -> Vec<CountRecord>
 //
-//   pub async fn fetch_telraam_excel(source_id: &str, url: &str) -> Result<Vec<CountRecord>, String> {
-//       let bytes = gloo_net::http::Request::get(url).send().await...bytes().await...;
-//       Ok(parse_telraam_excel(source_id, &bytes))
-//   }
+//   pub async fn fetch_telraam_excel(source_id: &str, url: &str) -> Result<Vec<CountRecord>, String>
 
 // ── Aggregation ──────────────────────────────────────────────────────────────
 
 /// Group records by time bucket and sum counts.
-/// If `source_id` is given only that source is included; otherwise all.
+/// If `source_id` is `Some`, only that source is included.
 pub fn aggregate(
     records: &[CountRecord],
     modality: Modality,
