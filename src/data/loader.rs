@@ -155,10 +155,10 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
             format!("mtl-{}-{}", instance_id, dir_slug)
         };
         let name = match (acc.rue2.is_empty(), direction.is_empty()) {
-            (false, false) => format!("Mtl: {} @ {} ({})", acc.rue1, acc.rue2, direction),
-            (false, true)  => format!("Mtl: {} @ {}",      acc.rue1, acc.rue2),
-            (true,  false) => format!("Mtl: {} ({})",       acc.rue1, direction),
-            (true,  true)  => format!("Mtl: {}",             acc.rue1),
+            (false, false) => format!("VdM: {} @ {} ({})", acc.rue1, acc.rue2, direction),
+            (false, true)  => format!("VdM: {} @ {}",      acc.rue1, acc.rue2),
+            (true,  false) => format!("VdM: {} ({})",       acc.rue1, direction),
+            (true,  true)  => format!("VdM: {}",             acc.rue1),
         };
 
         let earliest = DateTime::from_timestamp(*chosen.keys().next().unwrap(), 0).unwrap();
@@ -204,9 +204,9 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
 
         let total_id = make_total_id(&rue1, &rue2);
         let name = if rue2.is_empty() {
-            format!("Mtl: {} (Total)", rue1)
+            format!("VdM: {} (Total)", rue1)
         } else {
-            format!("Mtl: {} @ {} (Total)", rue1, rue2)
+            format!("VdM: {} @ {} (Total)", rue1, rue2)
         };
         let (lat, lon) = (members[0].1, members[0].2);
         let color = SOURCE_COLORS[color_counter % SOURCE_COLORS.len()].to_string();
