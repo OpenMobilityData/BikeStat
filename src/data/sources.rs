@@ -59,19 +59,19 @@ static TELRAAM_ANNOTATIONS: &[(&str, TelraamAnnotation)] = &[
     (
         "telraam-9794",
         TelraamAnnotation {
-            display_name: "Telraam: Terrebonne @ King Edward (NDG)",
-            // TODO: confirm actual compass orientation from the Telraam segment map
-            dir_a_to_b: "A→B",
-            dir_b_to_a: "B→A",
+            display_name: "Telraam: Terrebonne @ King Edward",
+            dir_a_to_b: "Eastbound",
+            dir_b_to_a: "Westbound",
         },
     ),
     (
         "telraam-10045",
         TelraamAnnotation {
-            display_name: "Telraam: Terrebonne @ Royal (NDG)",
-            // TODO: confirm actual compass orientation from the Telraam segment map
-            dir_a_to_b: "A→B",
-            dir_b_to_a: "B→A",
+            display_name: "Telraam: Terrebonne @ Royal",
+            // Note: A/B orientation is reversed relative to the King Edward
+            // segment — confirmed against the Telraam segment map.
+            dir_a_to_b: "Westbound",
+            dir_b_to_a: "Eastbound",
         },
     ),
 ];
