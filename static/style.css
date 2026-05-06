@@ -212,6 +212,13 @@ main {
     white-space: nowrap;
 }
 
+.legend-stats {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.66rem;
+    opacity: 0.75;
+    margin-left: 0.25rem;
+}
+
 .map-container {
     height: 220px;
     background: #0a1628;

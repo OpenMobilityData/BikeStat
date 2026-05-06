@@ -10,6 +10,32 @@ pub struct Series {
     pub points: Vec<(DateTime<Utc>, f64)>,
 }
 
+fn series_stats(points: &[(DateTime<Utc>, f64)]) -> String {
+    if points.is_empty() { return String::new(); }
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut sum = 0.0_f64;
+    for (_, v) in points {
+        if *v < min { min = *v; }
+        if *v > max { max = *v; }
+        sum += *v;
+    }
+    format!("min {}  max {}  total {}", fmt_count(min), fmt_count(max), fmt_count(sum))
+}
+
+fn fmt_count(v: f64) -> String {
+    let n = v.round() as i64;
+    let mag = n.unsigned_abs().to_string();
+    let bytes = mag.as_bytes();
+    let mut out = String::new();
+    if n < 0 { out.push('-'); }
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i) % 3 == 0 { out.push(','); }
+        out.push(*b as char);
+    }
+    out
+}
+
 #[component]
 pub fn Chart(series: ReadSignal<Vec<Series>>) -> impl IntoView {
     let view_box = "0 0 900 400";
@@ -148,16 +174,20 @@ pub fn Chart(series: ReadSignal<Vec<Series>>) -> impl IntoView {
                 if s.is_empty() { return view! { <div></div> }.into_any(); }
                 view! {
                     <div class="chart-legend">
-                        {s.into_iter().map(|ser| view! {
-                            <div class="chart-legend-item">
-                                <svg width="24" height="10">
-                                    <line x1="1" y1="5" x2="23" y2="5"
-                                          stroke=ser.color.clone()
-                                          stroke-width="2"
-                                          stroke-dasharray=ser.dash.clone() />
-                                </svg>
-                                <span>{ser.label.clone()}</span>
-                            </div>
+                        {s.into_iter().map(|ser| {
+                            let stats = series_stats(&ser.points);
+                            view! {
+                                <div class="chart-legend-item">
+                                    <svg width="24" height="10">
+                                        <line x1="1" y1="5" x2="23" y2="5"
+                                              stroke=ser.color.clone()
+                                              stroke-width="2"
+                                              stroke-dasharray=ser.dash.clone() />
+                                    </svg>
+                                    <span>{ser.label.clone()}</span>
+                                    <span class="legend-stats">{stats}</span>
+                                </div>
+                            }
                         }).collect_view()}
                     </div>
                 }.into_any()
