@@ -40,17 +40,14 @@ fn App() -> impl IntoView {
 
     // ── Fetch Montreal data ──
     {
-        let set_sources  = set_sources.clone();
-        let set_records  = set_records.clone();
+        let set_sources   = set_sources.clone();
+        let set_records   = set_records.clone();
         let set_load_msgs = set_load_msgs.clone();
-        let set_date_from = set_date_from.clone();
-        let set_date_to   = set_date_to.clone();
         spawn_local(async move {
             add_msg(&set_load_msgs, "⏳ Loading Montréal data…");
             match loader::fetch_montreal_cyclistes().await {
                 Ok((new_srcs, new_recs)) => {
-                    // Widen date range to span all loaded data
-                    update_date_range(&new_recs, &set_date_from, &set_date_to);
+                    update_date_range(&new_recs, date_from, date_to, set_date_from, set_date_to);
                     set_sources.update(|s| s.extend(new_srcs));
                     set_records.update(|r| r.extend(new_recs));
                     remove_msg(&set_load_msgs, "⏳ Loading Montréal data…");
@@ -68,9 +65,9 @@ fn App() -> impl IntoView {
     for src in &telraam {
         if let LoaderType::TelraamExcel { file_urls, .. } = &src.loader_type {
             for url in file_urls {
-                let src_id  = src.id.clone();
-                let url     = url.clone();
-                let src_name = src.name.clone();
+                let src_id    = src.id.clone();
+                let url       = url.clone();
+                let src_name  = src.name.clone();
                 let set_records   = set_records.clone();
                 let set_load_msgs = set_load_msgs.clone();
                 spawn_local(async move {
@@ -78,6 +75,7 @@ fn App() -> impl IntoView {
                     add_msg(&set_load_msgs, &msg);
                     match loader::fetch_telraam_excel(&src_id, &url).await {
                         Ok(new_recs) => {
+                            update_date_range(&new_recs, date_from, date_to, set_date_from, set_date_to);
                             set_records.update(|r| r.extend(new_recs));
                             remove_msg(&set_load_msgs, &msg);
                         }
@@ -109,22 +107,38 @@ fn App() -> impl IntoView {
         });
     });
 
-    let on_preset = Callback::new(move |preset: &'static str| {
-        let y = Utc::now().year();
-        match preset {
-            "winter" => {
-                set_date_from.set(format!("{}-11-01", y - 1));
-                set_date_to.set(format!("{}-03-31", y));
-            }
-            "summer" => {
-                set_date_from.set(format!("{}-05-01", y));
-                set_date_to.set(format!("{}-09-30", y));
-            }
-            _ => {
-                let recs = records.get_untracked();
-                update_date_range(&recs, &set_date_from, &set_date_to);
-            }
+    // "All dates" resets the view to the full extent of whatever is loaded.
+    let on_preset = Callback::new(move |_: &'static str| {
+        let recs = records.get_untracked();
+        if let (Some(first), Some(last)) = (
+            recs.iter().map(|r| r.timestamp).min(),
+            recs.iter().map(|r| r.timestamp).max(),
+        ) {
+            set_date_from.set(first.format("%Y-%m-%d").to_string());
+            set_date_to.set(last.format("%Y-%m-%d").to_string());
         }
+    });
+
+    // Season preset buttons: derived reactively from the loaded records.
+    let (season_presets, set_season_presets) =
+        signal::<Vec<(String, String, String)>>(vec![]);
+    Effect::new(move |_| {
+        let recs = records.get();
+        let first = recs.iter().map(|r| r.timestamp).min();
+        let last  = recs.iter().map(|r| r.timestamp).max();
+        let presets = match (first, last) {
+            (Some(f), Some(l)) => compute_season_presets(
+                &f.format("%Y-%m-%d").to_string(),
+                &l.format("%Y-%m-%d").to_string(),
+            ),
+            _ => vec![],
+        };
+        set_season_presets.set(presets);
+    });
+
+    let on_season = Callback::new(move |(from, to): (String, String)| {
+        set_date_from.set(from);
+        set_date_to.set(to);
     });
 
     // ── Derived chart series ──
@@ -202,6 +216,8 @@ fn App() -> impl IntoView {
                 on_date_to=Callback::new(move |s| set_date_to.set(s))
 
                 on_preset=on_preset
+                season_presets=season_presets
+                on_season=on_season
             />
 
             <main>
@@ -218,18 +234,32 @@ fn App() -> impl IntoView {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// Expand the visible date window to include all timestamps in `recs`.
+/// Never shrinks an existing bound — only moves `from` earlier or `to` later.
 fn update_date_range(
     recs: &[CountRecord],
-    set_from: &WriteSignal<String>,
-    set_to: &WriteSignal<String>,
+    date_from: ReadSignal<String>,
+    date_to:   ReadSignal<String>,
+    set_from:  WriteSignal<String>,
+    set_to:    WriteSignal<String>,
 ) {
-    if let (Some(first), Some(last)) = (
+    let (Some(new_first), Some(new_last)) = (
         recs.iter().map(|r| r.timestamp).min(),
         recs.iter().map(|r| r.timestamp).max(),
-    ) {
-        set_from.set(first.format("%Y-%m-%d").to_string());
-        set_to.set(last.format("%Y-%m-%d").to_string());
-    }
+    ) else { return };
+
+    let parse = |s: String| NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+        .ok()
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|ndt| Utc.from_utc_datetime(&ndt));
+
+    let from = parse(date_from.get_untracked())
+        .map_or(new_first, |cur| cur.min(new_first));
+    let to   = parse(date_to.get_untracked())
+        .map_or(new_last,  |cur| cur.max(new_last));
+
+    set_from.set(from.format("%Y-%m-%d").to_string());
+    set_to.set(to.format("%Y-%m-%d").to_string());
 }
 
 fn add_msg(signal: &WriteSignal<Vec<String>>, msg: &str) {
@@ -253,6 +283,50 @@ fn replace_msg(signal: &WriteSignal<Vec<String>>, old: &str, new: &str) {
 ///
 /// Use case 1 (same modality, different locations): same hue, lightness varies.
 /// Use case 2 (same location, different modalities): hues are distinct.
+/// Return one `(label, from, to)` entry per summer and winter season that
+/// overlaps with the data window [from_str, to_str].
+///
+/// Season boundaries follow Montréal's seasonal bike-lane calendar:
+///   Summer — Apr 1 → Nov 15  (label "Summer YYYY")
+///   Winter — Nov 16 → Mar 31 the following year  (label "Winter YYYY/YYYY+1")
+fn compute_season_presets(from_str: &str, to_str: &str) -> Vec<(String, String, String)> {
+    let Ok(data_from) = NaiveDate::parse_from_str(from_str, "%Y-%m-%d") else { return vec![] };
+    let Ok(data_to)   = NaiveDate::parse_from_str(to_str,   "%Y-%m-%d") else { return vec![] };
+
+    let mut out = Vec::new();
+    // Scan years generously so we catch winters that straddle year boundaries.
+    for y in (data_from.year() - 1)..=(data_to.year() + 1) {
+        // Summer
+        if let (Some(sf), Some(st)) = (
+            NaiveDate::from_ymd_opt(y, 4,  1),
+            NaiveDate::from_ymd_opt(y, 11, 15),
+        ) {
+            if st >= data_from && sf <= data_to {
+                out.push((
+                    format!("Summer {}", y),
+                    sf.format("%Y-%m-%d").to_string(),
+                    st.format("%Y-%m-%d").to_string(),
+                ));
+            }
+        }
+        // Winter (Nov 16 of y → Mar 31 of y+1)
+        if let (Some(wf), Some(wt)) = (
+            NaiveDate::from_ymd_opt(y,     11, 16),
+            NaiveDate::from_ymd_opt(y + 1, 3,  31),
+        ) {
+            if wt >= data_from && wf <= data_to {
+                out.push((
+                    format!("Winter {}/{}", y, y + 1),
+                    wf.format("%Y-%m-%d").to_string(),
+                    wt.format("%Y-%m-%d").to_string(),
+                ));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.1.cmp(&b.1));
+    out
+}
+
 fn series_color(modality: Modality, source_idx: usize) -> String {
     let (hue, sat) = match modality {
         Modality::Bikes       => (350.0_f64, 0.80),

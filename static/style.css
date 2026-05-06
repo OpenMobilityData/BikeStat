@@ -110,7 +110,7 @@ button.active { background: var(--highlight); border-color: var(--highlight); co
 .source-list {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: 1rem;
 }
 
 .source-item {

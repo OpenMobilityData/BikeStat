@@ -53,7 +53,16 @@ static TELRAAM_ANNOTATIONS: &[(&str, TelraamAnnotation)] = &[
     (
         "telraam-9794",
         TelraamAnnotation {
-            display_name: "Telraam: Terrebonne (NDG)",
+            display_name: "Telraam: Terrebonne @ King Edward (NDG)",
+            // TODO: confirm actual compass orientation from the Telraam segment map
+            dir_a_to_b: "A→B",
+            dir_b_to_a: "B→A",
+        },
+    ),
+    (
+        "telraam-10045",
+        TelraamAnnotation {
+            display_name: "Telraam: Terrebonne @ Royal (NDG)",
             // TODO: confirm actual compass orientation from the Telraam segment map
             dir_a_to_b: "A→B",
             dir_b_to_a: "B→A",
@@ -98,10 +107,18 @@ pub fn telraam_sources() -> Vec<DataSource> {
         5, // SOURCE_COLORS index for the total; +1 → A→B, +2 → B→A
     );
 
-    // To add a second counter:
-    //   1. Add its annotation to TELRAAM_ANNOTATIONS above.
-    //   2. Copy the push_telraam_segment call, update the segment ID,
-    //      location, earliest date, file_urls, and base_color_idx (step of 3).
+    push_telraam_segment(
+        &mut out,
+        "telraam-10045",
+        LatLon { lat: 45.472, lon: -73.600 }, // TODO: verify coordinates from Telraam map
+        Utc.with_ymd_and_hms(2024, 9, 24, 0, 0, 0).unwrap(),
+        vec![
+            "data/telraam/10045/2024.xlsx".into(),
+            "data/telraam/10045/2025.xlsx".into(),
+            "data/telraam/10045/2026.xlsx".into(),
+        ],
+        8, // base_color_idx: +1 → A→B, +2 → B→A
+    );
 
     out
 }
