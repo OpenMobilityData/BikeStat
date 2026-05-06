@@ -19,7 +19,7 @@ time using the Mac-build → `rsync dist/` → `git pull` server loop. Each
 change was committed individually and tested against the live site as a
 deploy-pipeline exercise.
 
-The companion document `Notes/2026-05-06-Server-Deploy-Handoff.md` is the
+The companion document `Notes/2026-05-06-02-44-53-Server-Deploy-Handoff.md` is the
 as-built deploy playbook (lighttpd vhost, certbot, cron, etc.). Read that
 first if you need to reproduce the server setup; this doc covers what
 changed *after* the site went live.
@@ -161,7 +161,7 @@ BikeStat/
 │   ├── 2026-05-05-19-37-00-Session-1-Handoff.md       early dev (NoBikes era)
 │   ├── 2026-05-05-21-45-26-Session-2-Handoff.md
 │   ├── 2026-05-05-23-09-11-Session-3-Handoff.md
-│   ├── 2026-05-06-Server-Deploy-Handoff.md            ★ as-built deploy playbook
+│   ├── 2026-05-06-02-44-53-Server-Deploy-Handoff.md   ★ as-built deploy playbook
 │   └── 2026-05-06-07-24-48-Post-Deploy-UX-Iteration-Handoff.md   ← this file
 ├── scripts/
 │   └── refresh-vdm.sh                  cron-invoked: filtered VdM refresh +
@@ -347,7 +347,7 @@ In approximate priority order:
 
 ### References to read next
 
-- `Notes/2026-05-06-Server-Deploy-Handoff.md` — full deploy playbook,
+- `Notes/2026-05-06-02-44-53-Server-Deploy-Handoff.md` — full deploy playbook,
   including DNS / certbot / cron / lighttpd config.
 - Project memory at `~/.claude/projects/-Users-rhoge-Desktop-BikeStat/memory/`
   — covers stack, file layout, conventions. Loaded automatically by
