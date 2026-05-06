@@ -106,6 +106,8 @@ struct HoverInfo {
     crosshair_x: f64,    // SVG x for the vertical crosshair line
     client_x: f64,       // viewport pixels, for tooltip positioning
     client_y: f64,
+    flip_x: bool,        // tooltip to the LEFT of cursor (near right edge)
+    flip_y: bool,        // tooltip ABOVE cursor (near bottom edge)
     rows: Vec<HoverRow>,
 }
 
@@ -279,10 +281,26 @@ pub fn Chart(
 
         let crosshair_x = g.to_x(anchor_ts.timestamp());
 
+        // Flip tooltip side when too close to the viewport edge.  Thresholds
+        // are rough estimates of tooltip dimensions — exact pixels don't
+        // matter, only that the tooltip lands inside the viewport.
+        let viewport = web_sys::window()
+            .map(|w| (
+                w.inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(1920.0),
+                w.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(1080.0),
+            ))
+            .unwrap_or((1920.0, 1080.0));
+        let client_x = ev.client_x() as f64;
+        let client_y = ev.client_y() as f64;
+        let flip_x = client_x + 300.0 > viewport.0;
+        let flip_y = client_y + 200.0 > viewport.1;
+
         set_hover.set(Some(HoverInfo {
             crosshair_x,
-            client_x: ev.client_x() as f64,
-            client_y: ev.client_y() as f64,
+            client_x,
+            client_y,
+            flip_x,
+            flip_y,
             rows,
         }));
     };
@@ -376,10 +394,17 @@ pub fn Chart(
                 let date = hi.rows.first()
                     .map(|r| format_hover_date(r.timestamp, res))
                     .unwrap_or_default();
+                // CSS transform flips the tooltip's anchor across the cursor
+                // when we're too close to a viewport edge to fit on the
+                // default (lower-right) side.
+                let tx = if hi.flip_x { "calc(-100% - 14px)" } else { "14px" };
+                let ty = if hi.flip_y { "calc(-100% - 14px)" } else { "14px" };
                 view! {
                     <div class="chart-tooltip"
-                         style=format!("left: {}px; top: {}px;",
-                                       hi.client_x + 14.0, hi.client_y + 14.0)>
+                         style=format!(
+                             "left: {}px; top: {}px; transform: translate({}, {});",
+                             hi.client_x, hi.client_y, tx, ty,
+                         )>
                         <div class="chart-tooltip-date">{date}</div>
                         {hi.rows.iter().map(|row| {
                             let value = fmt_count(row.value);
