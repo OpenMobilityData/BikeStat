@@ -424,15 +424,58 @@ pub fn aggregate(
     source_id: Option<&str>,
 ) -> Vec<(DateTime<Utc>, f64)> {
     let mut buckets: BTreeMap<i64, f64> = BTreeMap::new();
+    let mut min_ts: Option<DateTime<Utc>> = None;
+    let mut max_ts: Option<DateTime<Utc>> = None;
     for rec in records {
         if rec.modality != modality { continue; }
         if source_id.map_or(false, |id| rec.source_id != id) { continue; }
+        min_ts = Some(min_ts.map_or(rec.timestamp, |m| m.min(rec.timestamp)));
+        max_ts = Some(max_ts.map_or(rec.timestamp, |m| m.max(rec.timestamp)));
         let key = bucket_key(rec.timestamp, resolution);
         *buckets.entry(key).or_insert(0.0) += rec.count;
     }
-    buckets.into_iter()
+    let mut out: Vec<(DateTime<Utc>, f64)> = buckets.into_iter()
         .filter_map(|(k, v)| DateTime::from_timestamp(k, 0).map(|dt| (dt, v)))
-        .collect()
+        .collect();
+
+    // Trim a leading or trailing partial bucket for Week / Month resolutions
+    // so the chart doesn't show a half-formed sum that reads as a traffic
+    // drop. A bucket is "complete" iff the data extent reaches its first day
+    // (leading) or last day (trailing). Hour and Day buckets are atomic.
+    if matches!(resolution, Resolution::Week | Resolution::Month) {
+        if let (Some(min), Some(max)) = (min_ts, max_ts) {
+            if let Some((b_start, _)) = out.first().copied() {
+                if min.date_naive() != b_start.date_naive() {
+                    out.remove(0);
+                }
+            }
+            if let Some((b_start, _)) = out.last().copied() {
+                if max.date_naive() != bucket_last_day(b_start, resolution) {
+                    out.pop();
+                }
+            }
+        }
+    }
+
+    out
+}
+
+fn bucket_last_day(b_start: DateTime<Utc>, res: Resolution) -> chrono::NaiveDate {
+    match res {
+        Resolution::Week => b_start.date_naive() + chrono::Duration::days(6),
+        Resolution::Month => {
+            let nd = b_start.date_naive();
+            let (y, m) = if nd.month() == 12 {
+                (nd.year() + 1, 1)
+            } else {
+                (nd.year(), nd.month() + 1)
+            };
+            chrono::NaiveDate::from_ymd_opt(y, m, 1).unwrap() - chrono::Duration::days(1)
+        }
+        // Hour and Day buckets are atomic — this helper is only called for
+        // Week / Month, but return something sensible for completeness.
+        Resolution::Hour | Resolution::Day => b_start.date_naive(),
+    }
 }
 
 fn bucket_key(ts: DateTime<Utc>, res: Resolution) -> i64 {
