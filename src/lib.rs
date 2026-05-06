@@ -484,21 +484,28 @@ fn compute_date_presets(from_str: &str, to_str: &str) -> Vec<(String, String, St
     out
 }
 
-/// Composite series color: modality sets the hue, source index sets lightness.
+/// Composite series color: source index sets the hue, modality sets lightness.
 ///
-/// Use case 1 (same modality, different locations): same hue, lightness varies.
-/// Use case 2 (same location, different modalities): hues are distinct.
+/// Locations get distinct hues so overlay comparison across sources is the
+/// primary visual cue.  Modality is encoded primarily by line dash pattern;
+/// the lightness offset here is a secondary tiebreaker when several
+/// modalities for the same location are plotted together.
+///
+/// Use case 1 (same modality, different locations): hues are distinct.
+/// Use case 2 (same location, different modalities): same hue, lightness varies.
 fn series_color(modality: Modality, source_idx: usize) -> String {
-    let (hue, sat) = match modality {
-        Modality::Bikes       => (350.0_f64, 0.80),
-        Modality::Pedestrians => ( 35.0,     0.85),
-        Modality::Cars        => (210.0,     0.75),
-        Modality::Trucks      => (120.0,     0.65),
-        Modality::Motorcycles => (280.0,     0.75),
+    // Eight distinct hues spread around the wheel, hand-picked for legibility
+    // against the dark theme.  Beyond eight sources we cycle.
+    const HUES: &[f64] = &[350.0, 30.0, 70.0, 120.0, 175.0, 215.0, 260.0, 310.0];
+    let hue = HUES[source_idx % HUES.len()];
+    let lightness = match modality {
+        Modality::Trucks      => 0.42,
+        Modality::Pedestrians => 0.52,
+        Modality::Bikes       => 0.62,
+        Modality::Cars        => 0.72,
+        Modality::Motorcycles => 0.80,
     };
-    // Lightness steps chosen for dark-theme legibility; spread across 8 levels.
-    const LEVELS: &[f64] = &[0.65, 0.48, 0.78, 0.40, 0.84, 0.56, 0.72, 0.44];
-    hsl_to_hex(hue, sat, LEVELS[source_idx % LEVELS.len()])
+    hsl_to_hex(hue, 0.72, lightness)
 }
 
 /// Number of full 12-month periods between `start` and `t`, using calendar
