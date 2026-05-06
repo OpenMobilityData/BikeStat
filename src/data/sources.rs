@@ -97,7 +97,7 @@ pub fn telraam_sources() -> Vec<DataSource> {
     push_telraam_segment(
         &mut out,
         "telraam-9794",
-        LatLon { lat: 45.471, lon: -73.609 },
+        LatLon { lat: 45.46392, lon: -73.63756 },
         Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
         vec![
             "data/telraam/9794/2024.xlsx".into(),
@@ -110,7 +110,7 @@ pub fn telraam_sources() -> Vec<DataSource> {
     push_telraam_segment(
         &mut out,
         "telraam-10045",
-        LatLon { lat: 45.472, lon: -73.600 }, // TODO: verify coordinates from Telraam map
+        LatLon { lat: 45.47303, lon: -73.62965 },
         Utc.with_ymd_and_hms(2024, 9, 24, 0, 0, 0).unwrap(),
         vec![
             "data/telraam/10045/2024.xlsx".into(),

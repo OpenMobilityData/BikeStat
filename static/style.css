@@ -227,9 +227,105 @@ main {
     overflow: hidden;
 }
 
-.map-container canvas {
-    width: 100%;
-    height: 100%;
+.map-content {
+    position: absolute;
+    inset: 0;
+    transform-origin: 50% 50%;
+}
+
+.map-tiles {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.map-tile {
+    position: absolute;
+    width: 256px;
+    height: 256px;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+.map-marker {
+    position: absolute;
+    cursor: pointer;
+    z-index: 1;
+}
+
+.map-marker:hover,
+.map-marker.selected {
+    z-index: 10;
+}
+
+.marker-dot {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid #a8b8d0;
+    background: #1a2a4a;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.map-marker.selected .marker-dot {
+    border-width: 3px;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7);
+}
+
+.marker-label {
+    position: absolute;
+    left: 0;
+    top: 12px;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    font-size: 11px;
+    line-height: 1.2;
+    color: #ffffff;
+    text-shadow:
+        -1px -1px 0 #000, 1px -1px 0 #000,
+        -1px  1px 0 #000, 1px  1px 0 #000,
+        -2px  0   0 #000, 2px  0   0 #000,
+         0  -2px  0 #000, 0   2px  0 #000;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.1s;
+}
+
+.map-marker:hover .marker-label,
+.map-marker.selected .marker-label {
+    opacity: 1;
+}
+
+.map-marker.label-above .marker-label {
+    top: auto;
+    bottom: 12px;
+}
+
+.map-hint {
+    position: absolute;
+    top: 6px;
+    left: 8px;
+    color: #c0c8d8;
+    font-size: 10px;
+    text-shadow:
+        -1px -1px 0 #000, 1px -1px 0 #000,
+        -1px  1px 0 #000, 1px  1px 0 #000;
+    pointer-events: none;
+}
+
+.map-attribution {
+    position: absolute;
+    bottom: 4px;
+    right: 8px;
+    color: #ffffff;
+    font-size: 9px;
+    opacity: 0.75;
+    text-shadow:
+        -1px -1px 0 #000, 1px -1px 0 #000,
+        -1px  1px 0 #000, 1px  1px 0 #000;
+    pointer-events: none;
 }
 
 /* SVG chart elements */
