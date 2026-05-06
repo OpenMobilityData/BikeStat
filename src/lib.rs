@@ -359,13 +359,22 @@ fn App() -> impl IntoView {
         if msgs.is_empty() { String::new() } else { msgs.join("  ") }
     };
 
-    // Replace the cron-written "VdM data: …" prefix with the localized one.
-    // Tolerates both pre- and post-deploy script versions of status.txt.
+    // Format the cron-written status line for display:
+    //   1. Strip any legacy "VdM data: " prefix (still present until cron
+    //      next runs after the script change that emits a bare timestamp).
+    //   2. Parse the timestamp as RFC 3339 UTC and convert to the browser's
+    //      local timezone so users see their own clock instead of UTC.
+    //   3. Fall back to showing the raw string if anything fails (defensive
+    //      against an unexpected server-side format change).
     let localized_status = move || {
         let raw = data_status.get().unwrap_or_default();
         if raw.is_empty() { return String::new(); }
-        let body = raw.strip_prefix("VdM data: ").unwrap_or(&raw);
-        format!("{}: {}", lang.get().t().vdm_data_prefix, body)
+        let body = raw.trim().strip_prefix("VdM data: ").unwrap_or(raw.trim());
+        let display = match chrono::DateTime::parse_from_rfc3339(body) {
+            Ok(dt) => dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M %:z").to_string(),
+            Err(_) => body.to_string(),
+        };
+        format!("{}: {}", lang.get().t().vdm_data_prefix, display)
     };
 
     view! {

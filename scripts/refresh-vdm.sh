@@ -65,7 +65,8 @@ fi
 
 mv -f "$FILTERED_TMP" "$DEST"
 
-# Status string: bare timestamp (server local time + tz code). The client
-# prepends a localized "VdM data: " / "Données VdM: " prefix at render time.
-printf '%s\n' "$(date '+%Y-%m-%d %H:%M %Z')" > "$STATUS_TMP"
+# Status string: ISO 8601 UTC timestamp.  The client parses this and
+# converts to the browser's local timezone for display, then prepends a
+# localized "VdM data:" / "Données VdM:" prefix.
+printf '%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$STATUS_TMP"
 mv -f "$STATUS_TMP" "$STATUS"
