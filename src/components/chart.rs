@@ -134,6 +134,19 @@ fn format_hover_date(ts: DateTime<Utc>, res: Resolution) -> String {
     }
 }
 
+/// Maximum allowed gap (in seconds) between consecutive bucketed points
+/// before the line is broken. Set to 2× the minimum bucket spacing so a
+/// single missing bucket reliably triggers a break. February's 28 days is
+/// the floor for Month so e.g. Apr→Jun (one missing May) still breaks.
+fn gap_threshold_secs(res: Resolution) -> i64 {
+    match res {
+        Resolution::Hour  => 2 * 3600,
+        Resolution::Day   => 2 * 86_400,
+        Resolution::Week  => 2 * 7 * 86_400,
+        Resolution::Month => 2 * 28 * 86_400,
+    }
+}
+
 #[component]
 pub fn Chart(
     series: ReadSignal<Vec<Series>>,
@@ -157,25 +170,55 @@ pub fn Chart(
     let derived = move || {
         let s = series.get();
         let xr = x_range.get();
+        let res = resolution.get();
         let g = compute_geom(&s, xr, pad_l, pad_t, w, h)?;
         let y_max = g.y_min + g.y_span;
+        let base_y = g.to_y(g.y_min);
+        let gap_threshold = gap_threshold_secs(res);
 
-        // Build polyline path strings
+        // Build per-series line and area paths, breaking the path whenever
+        // two consecutive points are spaced further apart than gap_threshold
+        // (i.e. data is missing). Each contiguous run becomes its own
+        // sub-path; the area sub-path is closed back down to the baseline.
         let paths: Vec<(String, String, String, String)> = s.iter().map(|ser| {
             if ser.points.is_empty() {
                 return (ser.color.clone(), ser.dash.clone(), String::new(), String::new());
             }
-            let pts: Vec<String> = ser.points.iter()
-                .map(|(dt, v)| format!("{:.1},{:.1}", g.to_x(dt.timestamp()), g.to_y(*v)))
-                .collect();
-            let line_d = format!("M {}", pts.join(" L "));
-
-            // area path: close down to y-axis baseline
-            let first_x = g.to_x(ser.points[0].0.timestamp());
-            let last_x  = g.to_x(ser.points.last().unwrap().0.timestamp());
-            let base_y  = g.to_y(g.y_min);
-            let area_d  = format!("M {},{} L {} L {},{} Z",
-                first_x, base_y, pts.join(" L "), last_x, base_y);
+            let mut line_d = String::new();
+            let mut area_d = String::new();
+            let mut prev_ts: Option<i64> = None;
+            let mut seg_first_x: Option<f64> = None;
+            let mut seg_last_x: f64 = 0.0;
+            for (dt, v) in &ser.points {
+                let ts = dt.timestamp();
+                let x = g.to_x(ts);
+                let y = g.to_y(*v);
+                let new_segment = match prev_ts {
+                    None => true,
+                    Some(p) => ts - p > gap_threshold,
+                };
+                if new_segment {
+                    if let Some(fx) = seg_first_x {
+                        // close previous area sub-path
+                        area_d.push_str(&format!(" L {:.1},{:.1} L {:.1},{:.1} Z",
+                            seg_last_x, base_y, fx, base_y));
+                    }
+                    if !line_d.is_empty() { line_d.push(' '); }
+                    line_d.push_str(&format!("M {:.1},{:.1}", x, y));
+                    if !area_d.is_empty() { area_d.push(' '); }
+                    area_d.push_str(&format!("M {:.1},{:.1}", x, y));
+                    seg_first_x = Some(x);
+                } else {
+                    line_d.push_str(&format!(" L {:.1},{:.1}", x, y));
+                    area_d.push_str(&format!(" L {:.1},{:.1}", x, y));
+                }
+                seg_last_x = x;
+                prev_ts = Some(ts);
+            }
+            if let Some(fx) = seg_first_x {
+                area_d.push_str(&format!(" L {:.1},{:.1} L {:.1},{:.1} Z",
+                    seg_last_x, base_y, fx, base_y));
+            }
             (ser.color.clone(), ser.dash.clone(), line_d, area_d)
         }).collect();
 
