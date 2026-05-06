@@ -137,9 +137,9 @@ fn App() -> impl IntoView {
     // 404 means cron hasn't produced one yet (e.g. fresh deploy) — silent
     // skip so the page still works off the historical xlsx alone.
     for src in &telraam {
-        if matches!(src.loader_type, LoaderType::TelraamExcel { .. }) {
+        if let LoaderType::TelraamExcel { segment_id, .. } = &src.loader_type {
             let src_id    = src.id.clone();
-            let url       = format!("data/telraam/{}/api.json", src.id);
+            let url       = format!("data/telraam/{}/api.json", segment_id);
             let src_name  = src.name.clone();
             let set_records   = set_records.clone();
             let set_load_msgs = set_load_msgs.clone();
