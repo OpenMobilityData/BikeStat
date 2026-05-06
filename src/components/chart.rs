@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use leptos::prelude::*;
+use wasm_bindgen::JsCast;
 
 #[derive(Clone, PartialEq)]
 pub struct Series {
@@ -36,6 +37,85 @@ fn fmt_count(v: f64) -> String {
     out
 }
 
+/// Layout + data-range parameters needed to map between data coordinates
+/// (timestamp / value) and SVG user coordinates.  Shared between the
+/// rendering closure and the hover handler so they agree on positions.
+#[derive(Clone)]
+struct ChartGeom {
+    x_min: f64,
+    y_min: f64,
+    x_span: f64,
+    y_span: f64,
+    pad_l: f64,
+    pad_t: f64,
+    w: f64,
+    h: f64,
+}
+
+impl ChartGeom {
+    fn to_x(&self, ts: i64) -> f64 {
+        self.pad_l + (ts as f64 - self.x_min) / self.x_span * self.w
+    }
+    fn to_y(&self, v: f64) -> f64 {
+        self.pad_t + self.h - (v - self.y_min) / self.y_span * self.h
+    }
+}
+
+fn compute_geom(
+    s: &[Series],
+    xr: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    pad_l: f64,
+    pad_t: f64,
+    w: f64,
+    h: f64,
+) -> Option<ChartGeom> {
+    if (s.is_empty() || s.iter().all(|ser| ser.points.is_empty())) && xr.is_none() {
+        return None;
+    }
+    let (x_min, x_max) = match xr {
+        Some((lo, hi)) => (lo.timestamp() as f64, hi.timestamp() as f64),
+        None => {
+            let xs: Vec<i64> = s.iter()
+                .flat_map(|ser| ser.points.iter().map(|(t, _)| t.timestamp()))
+                .collect();
+            (*xs.iter().min().unwrap() as f64, *xs.iter().max().unwrap() as f64)
+        }
+    };
+    let y_min = 0.0_f64;
+    let y_max = s.iter()
+        .flat_map(|ser| ser.points.iter().map(|(_, v)| *v))
+        .fold(0.0_f64, f64::max) * 1.1;
+    Some(ChartGeom {
+        x_min,
+        y_min,
+        x_span: (x_max - x_min).max(1.0),
+        y_span: (y_max - y_min).max(1.0),
+        pad_l,
+        pad_t,
+        w,
+        h,
+    })
+}
+
+/// Hover state — set on every mousemove over the plot area, cleared on leave.
+#[derive(Clone)]
+struct HoverInfo {
+    crosshair_x: f64,    // SVG x for the vertical crosshair line
+    client_x: f64,       // viewport pixels, for tooltip positioning
+    client_y: f64,
+    rows: Vec<HoverRow>,
+}
+
+#[derive(Clone)]
+struct HoverRow {
+    color: String,
+    label: String,
+    timestamp: DateTime<Utc>,
+    value: f64,
+    point_x: f64,        // SVG coords for the dot
+    point_y: f64,
+}
+
 #[component]
 pub fn Chart(
     series: ReadSignal<Vec<Series>>,
@@ -52,35 +132,13 @@ pub fn Chart(
     let w = 900.0_f64 - pad_l - pad_r;
     let h = 400.0_f64 - pad_t - pad_b;
 
+    let (hover, set_hover) = signal::<Option<HoverInfo>>(None);
+
     let derived = move || {
         let s = series.get();
         let xr = x_range.get();
-        if (s.is_empty() || s.iter().all(|ser| ser.points.is_empty())) && xr.is_none() {
-            return None;
-        }
-
-        let all_y: Vec<f64> = s.iter()
-            .flat_map(|ser| ser.points.iter().map(|(_, v)| *v))
-            .collect();
-
-        let (x_min, x_max) = match xr {
-            Some((lo, hi)) => (lo.timestamp() as f64, hi.timestamp() as f64),
-            None => {
-                let all_x: Vec<i64> = s.iter()
-                    .flat_map(|ser| ser.points.iter().map(|(dt, _)| dt.timestamp()))
-                    .collect();
-                (*all_x.iter().min().unwrap() as f64,
-                 *all_x.iter().max().unwrap() as f64)
-            }
-        };
-        let y_min = 0.0_f64;
-        let y_max = all_y.iter().cloned().fold(0.0_f64, f64::max) * 1.1;
-
-        let x_span = (x_max - x_min).max(1.0);
-        let y_span = (y_max - y_min).max(1.0);
-
-        let to_x = |ts: i64| pad_l + (ts as f64 - x_min) / x_span * w;
-        let to_y = |v: f64| pad_t + h - (v - y_min) / y_span * h;
+        let g = compute_geom(&s, xr, pad_l, pad_t, w, h)?;
+        let y_max = g.y_min + g.y_span;
 
         // Build polyline path strings
         let paths: Vec<(String, String, String, String)> = s.iter().map(|ser| {
@@ -88,14 +146,14 @@ pub fn Chart(
                 return (ser.color.clone(), ser.dash.clone(), String::new(), String::new());
             }
             let pts: Vec<String> = ser.points.iter()
-                .map(|(dt, v)| format!("{:.1},{:.1}", to_x(dt.timestamp()), to_y(*v)))
+                .map(|(dt, v)| format!("{:.1},{:.1}", g.to_x(dt.timestamp()), g.to_y(*v)))
                 .collect();
             let line_d = format!("M {}", pts.join(" L "));
 
             // area path: close down to y-axis baseline
-            let first_x = to_x(ser.points[0].0.timestamp());
-            let last_x  = to_x(ser.points.last().unwrap().0.timestamp());
-            let base_y  = to_y(y_min);
+            let first_x = g.to_x(ser.points[0].0.timestamp());
+            let last_x  = g.to_x(ser.points.last().unwrap().0.timestamp());
+            let base_y  = g.to_y(g.y_min);
             let area_d  = format!("M {},{} L {} L {},{} Z",
                 first_x, base_y, pts.join(" L "), last_x, base_y);
             (ser.color.clone(), ser.dash.clone(), line_d, area_d)
@@ -104,8 +162,8 @@ pub fn Chart(
         // Y-axis ticks
         let tick_count = 5;
         let y_ticks: Vec<(f64, String)> = (0..=tick_count).map(|i| {
-            let v = y_min + (y_max - y_min) * i as f64 / tick_count as f64;
-            (to_y(v), format!("{:.0}", v))
+            let v = g.y_min + (y_max - g.y_min) * i as f64 / tick_count as f64;
+            (g.to_y(v), format!("{:.0}", v))
         }).collect();
 
         // X-axis ticks (up to 8)
@@ -113,8 +171,8 @@ pub fn Chart(
         let x_tick_n = 7.min(max_points.max(if xr.is_some() { 7 } else { 0 }));
         let x_ticks: Vec<(f64, String)> = if x_tick_n == 0 { vec![] } else {
             (0..=x_tick_n).map(|i| {
-                let ts = (x_min + x_span * i as f64 / x_tick_n as f64) as i64;
-                let x = pad_l + (ts as f64 - x_min) / x_span * w;
+                let ts = (g.x_min + g.x_span * i as f64 / x_tick_n as f64) as i64;
+                let x = g.to_x(ts);
                 let label = DateTime::from_timestamp(ts, 0)
                     .map(|dt: DateTime<Utc>| dt.format("%b %d").to_string())
                     .unwrap_or_default();
@@ -124,6 +182,60 @@ pub fn Chart(
 
         Some((paths, y_ticks, x_ticks))
     };
+
+    // Mouse handlers for the transparent overlay rect.
+    let on_move = move |ev: web_sys::MouseEvent| {
+        let s = series.get();
+        let xr = x_range.get();
+        let Some(g) = compute_geom(&s, xr, pad_l, pad_t, w, h) else {
+            set_hover.set(None);
+            return;
+        };
+
+        let Some(target) = ev.current_target() else { return };
+        let Ok(elem) = target.dyn_into::<web_sys::Element>() else { return };
+        let rect = elem.get_bounding_client_rect();
+
+        let pointer_x_in_overlay = ev.client_x() as f64 - rect.left();
+        let fraction = (pointer_x_in_overlay / rect.width().max(1.0)).clamp(0.0, 1.0);
+        let cursor_ts = g.x_min + fraction * g.x_span;
+
+        // For each series, find the point closest to the cursor's timestamp.
+        let rows: Vec<HoverRow> = s.iter().filter_map(|ser| {
+            if ser.points.is_empty() { return None; }
+            let nearest = ser.points.iter().min_by(|a, b| {
+                let da = (a.0.timestamp() as f64 - cursor_ts).abs();
+                let db = (b.0.timestamp() as f64 - cursor_ts).abs();
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            })?;
+            Some(HoverRow {
+                color: ser.color.clone(),
+                label: ser.label.clone(),
+                timestamp: nearest.0,
+                value: nearest.1,
+                point_x: g.to_x(nearest.0.timestamp()),
+                point_y: g.to_y(nearest.1),
+            })
+        }).collect();
+
+        if rows.is_empty() {
+            set_hover.set(None);
+            return;
+        }
+
+        // Snap the crosshair to the first series' nearest point.  All series
+        // share the same time grid (same Resolution), so this aligns with the
+        // dots in the typical case.
+        let crosshair_x = rows[0].point_x;
+
+        set_hover.set(Some(HoverInfo {
+            crosshair_x,
+            client_x: ev.client_x() as f64,
+            client_y: ev.client_y() as f64,
+            rows,
+        }));
+    };
+    let on_leave = move |_: web_sys::MouseEvent| set_hover.set(None);
 
     view! {
         <div class="chart-container">
@@ -177,9 +289,60 @@ pub fn Chart(
                                 </g>
                             }).collect_view()}
                         </g>
+
+                        // Transparent hover-target rect.  Drawn after the chart
+                        // contents but visually invisible — captures mouse moves
+                        // for the crosshair tooltip.
+                        <rect class="chart-hover-area"
+                              x=pad_l y=pad_t width=w height=h
+                              fill="transparent"
+                              on:mousemove=on_move
+                              on:mouseleave=on_leave />
+
+                        // Crosshair + per-series dots, drawn last so they sit
+                        // above everything else.  pointer-events: none in CSS
+                        // so they don't intercept mousemove from the rect.
+                        {move || hover.get().map(|hi| view! {
+                            <g class="chart-hover">
+                                <line class="chart-crosshair"
+                                      x1=hi.crosshair_x y1=pad_t
+                                      x2=hi.crosshair_x y2=(pad_t + h) />
+                                {hi.rows.iter().map(|row| view! {
+                                    <circle class="chart-hover-dot"
+                                            cx=row.point_x cy=row.point_y
+                                            r="4"
+                                            fill=row.color.clone() />
+                                }).collect_view()}
+                            </g>
+                        })}
                     </svg>
                 }.into_any(),
             }}
+
+            // ── Hover tooltip (HTML, position: fixed to avoid clipping) ──
+            {move || hover.get().map(|hi| {
+                let date = hi.rows.first()
+                    .map(|r| r.timestamp.format("%Y-%m-%d %H:%M UTC").to_string())
+                    .unwrap_or_default();
+                view! {
+                    <div class="chart-tooltip"
+                         style=format!("left: {}px; top: {}px;",
+                                       hi.client_x + 14.0, hi.client_y + 14.0)>
+                        <div class="chart-tooltip-date">{date}</div>
+                        {hi.rows.iter().map(|row| {
+                            let value = fmt_count(row.value);
+                            view! {
+                                <div class="chart-tooltip-row">
+                                    <span class="chart-tooltip-swatch"
+                                          style=format!("background: {};", row.color)></span>
+                                    <span class="chart-tooltip-label">{row.label.clone()}</span>
+                                    <span class="chart-tooltip-value">{value}</span>
+                                </div>
+                            }
+                        }).collect_view()}
+                    </div>
+                }
+            })}
 
             // ── Legend ──
             {move || {

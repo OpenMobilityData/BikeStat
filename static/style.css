@@ -349,6 +349,58 @@ main {
 .chart-area { opacity: 0.15; }
 .chart-title { fill: var(--text); font-size: 12px; }
 
+/* Hover crosshair + dot markers (rendered above the chart, click-through) */
+.chart-hover { pointer-events: none; }
+.chart-crosshair {
+    stroke: rgba(255, 255, 255, 0.35);
+    stroke-width: 1;
+    stroke-dasharray: 3 3;
+}
+.chart-hover-dot {
+    stroke: #fff;
+    stroke-width: 1.2;
+}
+.chart-hover-area { cursor: crosshair; }
+
+/* Floating tooltip showing date + per-series values at the cursor */
+.chart-tooltip {
+    position: fixed;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.45rem 0.65rem;
+    font-size: 0.75rem;
+    color: var(--text);
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 20;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+.chart-tooltip-date {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-bottom: 0.3rem;
+}
+.chart-tooltip-row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    line-height: 1.45;
+}
+.chart-tooltip-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+.chart-tooltip-label { flex: 1; }
+.chart-tooltip-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 600;
+}
+
 /* Loading / empty states */
 .placeholder {
     display: flex;
