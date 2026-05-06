@@ -194,7 +194,7 @@ fn App() -> impl IntoView {
     view! {
         <div id="app">
             <header>
-                <h1>"NoBikes"</h1>
+                <h1>"BikeStat"</h1>
                 <span class="subtitle">"Traffic Count Explorer"</span>
                 <span class="load-status">{status_text}</span>
             </header>
