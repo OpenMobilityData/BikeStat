@@ -215,15 +215,51 @@ pub fn Chart(
         let rect = elem.get_bounding_client_rect();
 
         let pointer_x_in_overlay = ev.client_x() as f64 - rect.left();
-        let fraction = (pointer_x_in_overlay / rect.width().max(1.0)).clamp(0.0, 1.0);
-        let cursor_ts = g.x_min + fraction * g.x_span;
+        let pointer_y_in_overlay = ev.client_y() as f64 - rect.top();
+        let frac_x = (pointer_x_in_overlay / rect.width().max(1.0)).clamp(0.0, 1.0);
+        let frac_y = (pointer_y_in_overlay / rect.height().max(1.0)).clamp(0.0, 1.0);
 
-        // For each series, find the point closest to the cursor's timestamp.
+        // The overlay rect is exactly the plot area, so its fractional
+        // coordinates map directly to SVG user space within (pad_l..pad_l+w,
+        // pad_t..pad_t+h).
+        let cursor_svg_x = g.pad_l + frac_x * g.w;
+        let cursor_svg_y = g.pad_t + frac_y * g.h;
+
+        // Anchor the snap to the globally-nearest point across all series in
+        // SVG (pixel) space.  Pure time-based snapping struggles with sharp
+        // peaks at high resolution: at hour resolution the chart can pack
+        // several hours per pixel, so a peak's adjacent low-value hour can
+        // win the "nearest in time" race even when you're aiming squarely
+        // at the spike.  Euclidean distance on the rendered points means
+        // moving the cursor up toward a tall spike snaps onto it.
+        let mut anchor_ts: Option<DateTime<Utc>> = None;
+        let mut best_d2 = f64::INFINITY;
+        for ser in s.iter() {
+            for (t, v) in &ser.points {
+                let px = g.to_x(t.timestamp());
+                let py = g.to_y(*v);
+                let d2 = (px - cursor_svg_x).powi(2) + (py - cursor_svg_y).powi(2);
+                if d2 < best_d2 {
+                    best_d2 = d2;
+                    anchor_ts = Some(*t);
+                }
+            }
+        }
+
+        let Some(anchor_ts) = anchor_ts else {
+            set_hover.set(None);
+            return;
+        };
+        let anchor_secs = anchor_ts.timestamp() as f64;
+
+        // Per-series readout: look up the value at the anchor timestamp by
+        // nearest-in-time.  Series share the same Resolution grid, so this
+        // typically hits the same timestamp exactly.
         let rows: Vec<HoverRow> = s.iter().filter_map(|ser| {
             if ser.points.is_empty() { return None; }
             let nearest = ser.points.iter().min_by(|a, b| {
-                let da = (a.0.timestamp() as f64 - cursor_ts).abs();
-                let db = (b.0.timestamp() as f64 - cursor_ts).abs();
+                let da = (a.0.timestamp() as f64 - anchor_secs).abs();
+                let db = (b.0.timestamp() as f64 - anchor_secs).abs();
                 da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
             })?;
             Some(HoverRow {
@@ -241,10 +277,7 @@ pub fn Chart(
             return;
         }
 
-        // Snap the crosshair to the first series' nearest point.  All series
-        // share the same time grid (same Resolution), so this aligns with the
-        // dots in the typical case.
-        let crosshair_x = rows[0].point_x;
+        let crosshair_x = g.to_x(anchor_ts.timestamp());
 
         set_hover.set(Some(HoverInfo {
             crosshair_x,
