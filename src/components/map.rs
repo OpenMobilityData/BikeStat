@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 use crate::data::types::DataSource;
+use crate::i18n::Lang;
 
 const TILE_SIZE: f64 = 256.0;
 /// Width target used to pick the zoom level. Actual container may be wider.
@@ -85,6 +86,7 @@ pub fn SourceMap(
     selected: ReadSignal<Vec<String>>,
     on_toggle: Callback<String>,
 ) -> impl IntoView {
+    let lang = use_context::<ReadSignal<Lang>>().expect("Lang context not provided");
     view! {
         <div class="map-container">
             {move || {
@@ -92,6 +94,7 @@ pub fn SourceMap(
                 let srcs     = marker_sources(&all_srcs);
                 let sel      = selected.get();
                 let is_empty = all_srcs.is_empty();
+                let l        = lang.get();
 
                 // Pick effective viewport dimensions: on narrow viewports the
                 // map container is shorter (see style.css mobile rules) and
@@ -189,11 +192,7 @@ pub fn SourceMap(
                     }
                 }).collect_view();
 
-                let hint = if is_empty {
-                    "Loading stations…"
-                } else {
-                    "Click a marker to select / deselect"
-                };
+                let hint = if is_empty { l.t().loading_stations } else { l.t().click_marker };
 
                 let content_style = format!("transform: scale({:.4});", scale);
                 view! {

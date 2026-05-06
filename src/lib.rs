@@ -1,5 +1,6 @@
 mod data;
 mod components;
+mod i18n;
 
 use std::collections::BTreeMap;
 
@@ -13,6 +14,7 @@ use data::types::{CountRecord, DataSource, LoaderType, Modality, Resolution, Vie
 use components::chart::{Chart, Series};
 use components::map::SourceMap;
 use components::sidebar::Sidebar;
+use i18n::Lang;
 
 #[wasm_bindgen(start)]
 pub fn main() {
@@ -39,6 +41,13 @@ fn App() -> impl IntoView {
     // default below ~768px and reveals it when this is true.  On wider
     // viewports the CSS rule has no effect — sidebar is always visible.
     let (sidebar_open, set_sidebar_open) = signal(false);
+
+    // UI language: persisted across visits in localStorage, defaults to the
+    // browser's preferred language. Provided as context so any component
+    // can read it via `use_context::<ReadSignal<Lang>>()`.
+    let (lang, set_lang) = signal(Lang::from_browser());
+    Effect::new(move |_| lang.get().store());
+    provide_context(lang);
 
     // ── Seed catalogue with pre-configured sources immediately ──
     // Their records load asynchronously below; the entries appear in the
@@ -183,6 +192,7 @@ fn App() -> impl IntoView {
             (Some(f), Some(l)) => compute_date_presets(
                 &f.format("%Y-%m-%d").to_string(),
                 &l.format("%Y-%m-%d").to_string(),
+                lang.get(),
             ),
             _ => vec![],
         };
@@ -225,6 +235,7 @@ fn App() -> impl IntoView {
         let from_str = date_from.get();
         let to_str   = date_to.get();
         let mode     = view_mode.get();
+        let l        = lang.get();
 
         let from_dt = NaiveDate::parse_from_str(&from_str, "%Y-%m-%d")
             .ok().and_then(|d| d.and_hms_opt(0, 0, 0))
@@ -247,7 +258,7 @@ fn App() -> impl IntoView {
                             if let Some(t) = to_dt   { pts.retain(|(dt, _)| *dt <= t); }
                             if !pts.is_empty() {
                                 out.push(Series {
-                                    label:  format!("{} – {}", meta.name, modality.label()),
+                                    label:  format!("{} – {}", meta.name, modality.label(l)),
                                     color:  series_color(*modality, src_idx),
                                     dash:   modality.stroke_dasharray().unwrap_or("").to_string(),
                                     points: pts,
@@ -284,7 +295,7 @@ fn App() -> impl IntoView {
                                 format!("{}–{}", y0, y0 + 1)
                             };
                             out.push(Series {
-                                label:  format!("{} – {} ({})", meta.name, modality.label(), year_label),
+                                label:  format!("{} – {} ({})", meta.name, modality.label(l), year_label),
                                 color:  yoy_color(yo),
                                 dash:   modality.stroke_dasharray().unwrap_or("").to_string(),
                                 points: year_pts,
@@ -322,19 +333,34 @@ fn App() -> impl IntoView {
         if msgs.is_empty() { String::new() } else { msgs.join("  ") }
     };
 
+    // Replace the cron-written "VdM data: …" prefix with the localized one.
+    // Tolerates both pre- and post-deploy script versions of status.txt.
+    let localized_status = move || {
+        let raw = data_status.get().unwrap_or_default();
+        if raw.is_empty() { return String::new(); }
+        let body = raw.strip_prefix("VdM data: ").unwrap_or(&raw);
+        format!("{}: {}", lang.get().t().vdm_data_prefix, body)
+    };
+
     view! {
         <div id="app" class:sidebar-open=move || sidebar_open.get()>
             <header>
                 <button class="mobile-toggle"
                         on:click=move |_| set_sidebar_open.update(|v| *v = !*v)>
-                    {move || if sidebar_open.get() { "Close" } else { "Filters" }}
+                    {move || {
+                        let t = lang.get().t();
+                        if sidebar_open.get() { t.mobile_close } else { t.mobile_filters }
+                    }}
                 </button>
                 <h1>"BikeStat"</h1>
-                <span class="subtitle">"Traffic Count Aggregator"</span>
+                <span class="subtitle">{move || lang.get().t().subtitle}</span>
                 <span class="load-status">{status_text}</span>
-                <span class="data-status">
-                    {move || data_status.get().unwrap_or_default()}
-                </span>
+                <span class="data-status">{localized_status}</span>
+                <button class="lang-toggle"
+                        title="Language / Langue"
+                        on:click=move |_| set_lang.update(|l| *l = l.other())>
+                    {move || lang.get().other().short_label()}
+                </button>
             </header>
 
             <Sidebar
@@ -439,28 +465,29 @@ fn replace_msg(signal: &WriteSignal<Vec<String>>, old: &str, new: &str) {
 ///      (nominal Jan 1 → Dec 31; chart filtering handles partial coverage).
 ///   4. Seasonal — Summer (Apr 1 → Nov 15) and Winter (Nov 16 → Mar 31 of
 ///      the following year) entries that overlap the data, sorted by start.
-fn compute_date_presets(from_str: &str, to_str: &str) -> Vec<(String, String, String, i64)> {
+fn compute_date_presets(from_str: &str, to_str: &str, lang: Lang) -> Vec<(String, String, String, i64)> {
     let Ok(data_from) = NaiveDate::parse_from_str(from_str, "%Y-%m-%d") else { return vec![] };
     let Ok(data_to)   = NaiveDate::parse_from_str(to_str,   "%Y-%m-%d") else { return vec![] };
+    let t = lang.t();
 
-    let entry = |label: &str, f: NaiveDate, t: NaiveDate| {
+    let entry = |label: &str, f: NaiveDate, tdate: NaiveDate| {
         (label.to_string(),
          f.format("%Y-%m-%d").to_string(),
-         t.format("%Y-%m-%d").to_string(),
-         (t - f).num_days())
+         tdate.format("%Y-%m-%d").to_string(),
+         (tdate - f).num_days())
     };
 
     let mut out = Vec::new();
 
     // ── All dates ──
-    out.push(entry("All dates", data_from, data_to));
+    out.push(entry(t.all_dates, data_from, data_to));
 
     // ── Relative presets, anchored at the latest record ──
     let relatives: [(&str, Option<NaiveDate>); 4] = [
-        ("Last Week",     Some(data_to - Duration::days(7))),
-        ("Last Month",    data_to.checked_sub_months(Months::new(1))),
-        ("Last 3 Months", data_to.checked_sub_months(Months::new(3))),
-        ("Last 6 Months", data_to.checked_sub_months(Months::new(6))),
+        (t.last_week,     Some(data_to - Duration::days(7))),
+        (t.last_month,    data_to.checked_sub_months(Months::new(1))),
+        (t.last_3_months, data_to.checked_sub_months(Months::new(3))),
+        (t.last_6_months, data_to.checked_sub_months(Months::new(6))),
     ];
     for (label, from_opt) in relatives {
         if let Some(from_dt) = from_opt {
@@ -490,7 +517,7 @@ fn compute_date_presets(from_str: &str, to_str: &str) -> Vec<(String, String, St
             NaiveDate::from_ymd_opt(y, 11, 15),
         ) {
             if st >= data_from && sf <= data_to {
-                seasons.push(entry(&format!("Summer {}", y), sf, st));
+                seasons.push(entry(&format!("{} {}", t.summer, y), sf, st));
             }
         }
         if let (Some(wf), Some(wt)) = (
@@ -498,7 +525,7 @@ fn compute_date_presets(from_str: &str, to_str: &str) -> Vec<(String, String, St
             NaiveDate::from_ymd_opt(y + 1, 3,  31),
         ) {
             if wt >= data_from && wf <= data_to {
-                seasons.push(entry(&format!("Winter {}/{}", y, y + 1), wf, wt));
+                seasons.push(entry(&format!("{} {}/{}", t.winter, y, y + 1), wf, wt));
             }
         }
     }

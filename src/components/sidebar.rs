@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 use crate::data::types::{DataSource, Modality, Resolution, ViewMode};
+use crate::i18n::Lang;
 
 #[component]
 pub fn Sidebar(
@@ -24,11 +25,12 @@ pub fn Sidebar(
     view_mode: ReadSignal<ViewMode>,
     on_year_on_year: Callback<()>,
 ) -> impl IntoView {
+    let lang = use_context::<ReadSignal<Lang>>().expect("Lang context not provided");
     view! {
         <aside>
             // ── Data Sources ──
             <div class="control-group">
-                <label class="section-label">"Locations"</label>
+                <label class="section-label">{move || lang.get().t().locations}</label>
                 <div class="source-list">
                     {move || {
                         // Collect consecutive sources that share the same group key
@@ -101,7 +103,7 @@ pub fn Sidebar(
 
             // ── Modalities ──
             <div class="control-group">
-                <label class="section-label">"Modalities"</label>
+                <label class="section-label">{move || lang.get().t().modalities}</label>
                 <div class="btn-group">
                     {Modality::all().iter().map(|&m| {
                         let on_modality_toggle = on_modality_toggle.clone();
@@ -110,7 +112,7 @@ pub fn Sidebar(
                                 class=move || if selected_modalities.get().contains(&m)
                                     { "active" } else { "" }
                                 on:click=move |_| on_modality_toggle.run(m)>
-                                {m.label()}
+                                {move || m.label(lang.get())}
                             </button>
                         }
                     }).collect_view()}
@@ -119,7 +121,7 @@ pub fn Sidebar(
 
             // ── Time Resolution ──
             <div class="control-group">
-                <label class="section-label">"Resolution"</label>
+                <label class="section-label">{move || lang.get().t().resolution}</label>
                 <div class="btn-group">
                     {[Resolution::Hour, Resolution::Day, Resolution::Week, Resolution::Month]
                         .into_iter().map(|r| {
@@ -128,7 +130,7 @@ pub fn Sidebar(
                             <button
                                 class=move || if resolution.get() == r { "active" } else { "" }
                                 on:click=move |_| on_resolution.run(r)>
-                                {r.label()}
+                                {move || r.label(lang.get())}
                             </button>
                         }
                     }).collect_view()}
@@ -137,24 +139,25 @@ pub fn Sidebar(
 
             // ── Time Window ──
             <div class="control-group">
-                <label class="section-label">"Date range"</label>
+                <label class="section-label">{move || lang.get().t().date_range}</label>
                 <div class="btn-group">
                     {move || {
                         // A preset is disabled if its day-span is shorter than
                         // what the current resolution can summarize without
                         // ending up with all-partial buckets that get trimmed.
                         let res = resolution.get();
+                        let l   = lang.get();
                         let min_days: i64 = match res {
                             Resolution::Hour | Resolution::Day => 0,
                             Resolution::Week  => 14,
                             Resolution::Month => 60,
                         };
-                        let res_label = res.label().to_lowercase();
+                        let res_label = res.label(l).to_lowercase();
                         date_presets.get().into_iter().map(|(label, from, to, days)| {
                             let on_date_preset = on_date_preset.clone();
                             let disabled = days < min_days;
                             let title = if disabled {
-                                format!("Range is too short to show a full {}", res_label)
+                                format!("{} {}", l.t().range_too_short, res_label)
                             } else {
                                 String::new()
                             };
@@ -171,14 +174,14 @@ pub fn Sidebar(
                     <button
                         class=move || if view_mode.get() == ViewMode::YearOnYear { "active" } else { "" }
                         on:click=move |_| on_year_on_year.run(())>
-                        "Year-on-Year"
+                        {move || lang.get().t().year_on_year}
                     </button>
                 </div>
             </div>
 
             // ── Custom Date Range ──
             <div class="control-group">
-                <label class="section-label">"Custom range"</label>
+                <label class="section-label">{move || lang.get().t().custom_range}</label>
                 <div class="date-range">
                     <input type="date"
                            prop:value=move || date_from.get()

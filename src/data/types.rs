@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::Lang;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Modality {
     Bikes,
@@ -10,12 +12,13 @@ pub enum Modality {
 }
 
 impl Modality {
-    pub fn label(&self) -> &'static str {
+    pub fn label(&self, lang: Lang) -> &'static str {
+        let t = lang.t();
         match self {
-            Self::Bikes       => "Bikes",
-            Self::Pedestrians => "Pedestrians",
-            Self::Cars        => "Cars",
-            Self::Trucks      => "Trucks",
+            Self::Bikes       => t.bikes,
+            Self::Pedestrians => t.pedestrians,
+            Self::Cars        => t.cars,
+            Self::Trucks      => t.trucks,
         }
     }
 
@@ -54,12 +57,13 @@ pub enum Resolution { Hour, Day, Week, Month }
 pub enum ViewMode { Linear, YearOnYear }
 
 impl Resolution {
-    pub fn label(&self) -> &'static str {
+    pub fn label(&self, lang: Lang) -> &'static str {
+        let t = lang.t();
         match self {
-            Self::Hour  => "Hour",
-            Self::Day   => "Day",
-            Self::Week  => "Week",
-            Self::Month => "Month",
+            Self::Hour  => t.hour,
+            Self::Day   => t.day,
+            Self::Week  => t.week,
+            Self::Month => t.month,
         }
     }
 }

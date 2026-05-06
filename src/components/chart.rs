@@ -4,6 +4,7 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::data::types::Resolution;
+use crate::i18n::Lang;
 
 #[derive(Clone, PartialEq)]
 pub struct Series {
@@ -157,6 +158,7 @@ pub fn Chart(
     /// Current bucket resolution; used to format the tooltip date.
     resolution: ReadSignal<Resolution>,
 ) -> impl IntoView {
+    let lang = use_context::<ReadSignal<Lang>>().expect("Lang context not provided");
     let view_box = "0 0 900 400";
     let pad_l = 60.0_f64;
     let pad_r = 20.0_f64;
@@ -362,7 +364,7 @@ pub fn Chart(
         <div class="chart-container">
             // ── Chart SVG ──
             {move || match derived() {
-                None => view! { <div class="placeholder">"Please select one or more locations to view counts"</div> }.into_any(),
+                None => view! { <div class="placeholder">{move || lang.get().t().select_locations}</div> }.into_any(),
                 Some((paths, y_ticks, x_ticks)) => view! {
                     <svg viewBox=view_box preserveAspectRatio="none">
                         // Grid lines

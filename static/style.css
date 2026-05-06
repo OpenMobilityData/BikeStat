@@ -432,6 +432,15 @@ main {
 /* Mobile-only toggle button — hidden on desktop. */
 .mobile-toggle { display: none; }
 
+/* Header language toggle (always visible). Shows the *other* language. */
+.lang-toggle {
+    margin-left: 0.6rem;
+    font-size: 0.78rem;
+    padding: 0.3rem 0.55rem;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+
 /* ── Narrow viewports (phones) ── */
 @media (max-width: 768px) {
     html, body { font-size: 15px; }
