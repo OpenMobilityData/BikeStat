@@ -371,7 +371,7 @@ fn App() -> impl IntoView {
         if raw.is_empty() { return String::new(); }
         let body = raw.trim().strip_prefix("VdM data: ").unwrap_or(raw.trim());
         let display = match chrono::DateTime::parse_from_rfc3339(body) {
-            Ok(dt) => dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M %:z").to_string(),
+            Ok(dt) => dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string(),
             Err(_) => body.to_string(),
         };
         format!("{}: {}", lang.get().t().vdm_data_prefix, display)
@@ -405,7 +405,7 @@ fn App() -> impl IntoView {
 
         let oldest = per_seg.iter().map(|(t, _)| *t).min()?;
         let header = oldest.with_timezone(&chrono::Local)
-            .format("%Y-%m-%d %H:%M %:z").to_string();
+            .format("%Y-%m-%d %H:%M").to_string();
         let mut tooltip_lines: Vec<(DateTime<Utc>, String)> = per_seg;
         tooltip_lines.sort_by_key(|(t, _)| *t);
         let tooltip = tooltip_lines.iter()
