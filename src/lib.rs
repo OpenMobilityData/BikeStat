@@ -147,7 +147,9 @@ fn App() -> impl IntoView {
         let mut out = vec![];
         for modality in &mods {
             for src_id in &srcs {
-                if let Some(meta) = all_srcs.iter().find(|s| &s.id == src_id) {
+                if let Some((src_idx, meta)) = all_srcs.iter().enumerate()
+                    .find(|(_, s)| &s.id == src_id)
+                {
                     if !meta.modalities.contains(modality) { continue; }
                     let mut pts = loader::aggregate(&recs, *modality, res, Some(src_id));
                     if let Some(f) = from_dt { pts.retain(|(dt, _)| *dt >= f); }
@@ -155,7 +157,8 @@ fn App() -> impl IntoView {
                     if !pts.is_empty() {
                         out.push(Series {
                             label:  format!("{} – {}", meta.name, modality.label()),
-                            color:  meta.color.clone(),
+                            color:  series_color(*modality, src_idx),
+                            dash:   modality.stroke_dasharray().unwrap_or("").to_string(),
                             points: pts,
                         });
                     }
@@ -244,4 +247,36 @@ fn replace_msg(signal: &WriteSignal<Vec<String>>, old: &str, new: &str) {
         if let Some(i) = v.iter().position(|m| m == &o) { v[i] = n; }
         else { v.push(n); }
     });
+}
+
+/// Composite series color: modality sets the hue, source index sets lightness.
+///
+/// Use case 1 (same modality, different locations): same hue, lightness varies.
+/// Use case 2 (same location, different modalities): hues are distinct.
+fn series_color(modality: Modality, source_idx: usize) -> String {
+    let (hue, sat) = match modality {
+        Modality::Bikes       => (350.0_f64, 0.80),
+        Modality::Pedestrians => ( 35.0,     0.85),
+        Modality::Cars        => (210.0,     0.75),
+        Modality::Trucks      => (120.0,     0.65),
+        Modality::Motorcycles => (280.0,     0.75),
+    };
+    // Lightness steps chosen for dark-theme legibility; spread across 8 levels.
+    const LEVELS: &[f64] = &[0.65, 0.48, 0.78, 0.40, 0.84, 0.56, 0.72, 0.44];
+    hsl_to_hex(hue, sat, LEVELS[source_idx % LEVELS.len()])
+}
+
+fn hsl_to_hex(h: f64, s: f64, l: f64) -> String {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let h6 = h / 60.0;
+    let x = c * (1.0 - (h6 % 2.0 - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r, g, b) = if      h6 < 1.0 { (c, x, 0.0) }
+                    else if h6 < 2.0 { (x, c, 0.0) }
+                    else if h6 < 3.0 { (0.0, c, x) }
+                    else if h6 < 4.0 { (0.0, x, c) }
+                    else if h6 < 5.0 { (x, 0.0, c) }
+                    else             { (c, 0.0, x) };
+    let u = |v: f64| ((v + m).clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!("#{:02x}{:02x}{:02x}", u(r), u(g), u(b))
 }

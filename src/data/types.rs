@@ -31,6 +31,18 @@ impl Modality {
         }
     }
 
+    /// SVG `stroke-dasharray` value for this modality.
+    /// `None` = solid line (Bikes, the primary modality).
+    pub fn stroke_dasharray(&self) -> Option<&'static str> {
+        match self {
+            Self::Bikes       => None,
+            Self::Pedestrians => Some("5 3"),
+            Self::Cars        => Some("2 3"),
+            Self::Trucks      => Some("8 3 2 3"),
+            Self::Motorcycles => Some("12 4"),
+        }
+    }
+
     pub fn all() -> &'static [Modality] {
         &[Self::Bikes, Self::Pedestrians, Self::Cars, Self::Trucks, Self::Motorcycles]
     }

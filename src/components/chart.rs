@@ -5,6 +5,8 @@ use leptos::prelude::*;
 pub struct Series {
     pub label: String,
     pub color: String,
+    /// SVG `stroke-dasharray` value; empty string means solid.
+    pub dash: String,
     pub points: Vec<(DateTime<Utc>, f64)>,
 }
 
@@ -43,9 +45,9 @@ pub fn Chart(series: ReadSignal<Vec<Series>>) -> impl IntoView {
         let to_y = |v: f64| pad_t + h - (v - y_min) / y_span * h;
 
         // Build polyline path strings
-        let paths: Vec<(String, String, String)> = s.iter().map(|ser| {
+        let paths: Vec<(String, String, String, String)> = s.iter().map(|ser| {
             if ser.points.is_empty() {
-                return (ser.color.clone(), String::new(), String::new());
+                return (ser.color.clone(), ser.dash.clone(), String::new(), String::new());
             }
             let pts: Vec<String> = ser.points.iter()
                 .map(|(dt, v)| format!("{:.1},{:.1}", to_x(dt.timestamp()), to_y(*v)))
@@ -58,7 +60,7 @@ pub fn Chart(series: ReadSignal<Vec<Series>>) -> impl IntoView {
             let base_y  = to_y(y_min);
             let area_d  = format!("M {},{} L {} L {},{} Z",
                 first_x, base_y, pts.join(" L "), last_x, base_y);
-            (ser.color.clone(), line_d, area_d)
+            (ser.color.clone(), ser.dash.clone(), line_d, area_d)
         }).collect();
 
         // Y-axis ticks
@@ -86,6 +88,7 @@ pub fn Chart(series: ReadSignal<Vec<Series>>) -> impl IntoView {
 
     view! {
         <div class="chart-container">
+            // ── Chart SVG ──
             {move || match derived() {
                 None => view! { <div class="placeholder">"Select a data source to begin"</div> }.into_any(),
                 Some((paths, y_ticks, x_ticks)) => view! {
@@ -97,16 +100,17 @@ pub fn Chart(series: ReadSignal<Vec<Series>>) -> impl IntoView {
                             }).collect_view()}
                         </g>
 
-                        // Area fills
-                        {paths.iter().map(|(color, _, area_d)| view! {
+                        // Area fills (solid regardless of modality dash pattern)
+                        {paths.iter().map(|(color, _, _, area_d)| view! {
                             <path d=area_d.clone()
                                   fill=color.clone() class="chart-area" />
                         }).collect_view()}
 
                         // Lines
-                        {paths.iter().map(|(color, line_d, _)| view! {
+                        {paths.iter().map(|(color, dash, line_d, _)| view! {
                             <path d=line_d.clone() class="chart-line"
-                                  stroke=color.clone() />
+                                  stroke=color.clone()
+                                  stroke-dasharray=dash.clone() />
                         }).collect_view()}
 
                         // Y axis
@@ -136,6 +140,27 @@ pub fn Chart(series: ReadSignal<Vec<Series>>) -> impl IntoView {
                         </g>
                     </svg>
                 }.into_any(),
+            }}
+
+            // ── Legend ──
+            {move || {
+                let s = series.get();
+                if s.is_empty() { return view! { <div></div> }.into_any(); }
+                view! {
+                    <div class="chart-legend">
+                        {s.into_iter().map(|ser| view! {
+                            <div class="chart-legend-item">
+                                <svg width="24" height="10">
+                                    <line x1="1" y1="5" x2="23" y2="5"
+                                          stroke=ser.color.clone()
+                                          stroke-width="2"
+                                          stroke-dasharray=ser.dash.clone() />
+                                </svg>
+                                <span>{ser.label.clone()}</span>
+                            </div>
+                        }).collect_view()}
+                    </div>
+                }.into_any()
             }}
         </div>
     }

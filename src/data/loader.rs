@@ -4,7 +4,7 @@ use std::io::Cursor;
 use chrono::{DateTime, Datelike, LocalResult, TimeZone, Utc};
 use chrono_tz::America::Montreal as MontrealTz;
 
-use crate::data::sources::{MONTREAL_CYCLISTES_URL, MONTREAL_LOCATION_FILTER, SOURCE_COLORS};
+use crate::data::sources::{telraam_annotation, MONTREAL_CYCLISTES_URL, MONTREAL_LOCATION_FILTER, SOURCE_COLORS};
 use crate::data::types::{CountRecord, DataSource, LatLon, LoaderType, Modality, Resolution};
 
 // ── CSV helpers ──────────────────────────────────────────────────────────────
@@ -34,6 +34,14 @@ fn parse_montreal_ts(s: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_str(&normalised, "%Y-%m-%d %H:%M:%S%:z")
         .ok()
         .map(|dt| dt.with_timezone(&Utc))
+}
+
+fn make_total_id(rue1: &str, rue2: &str) -> String {
+    let slug = |s: &str| s.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>();
+    format!("mtl-{}-{}-total", slug(rue1), slug(rue2))
 }
 
 // ── Montreal Cyclistes CSV ───────────────────────────────────────────────────
@@ -131,6 +139,10 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
     let mut list: Vec<_> = instances.into_iter().collect();
     list.sort_by(|a, b| a.0.cmp(&b.0));
 
+    // Track per-source metadata needed to build intersection totals afterwards.
+    // Each entry: (source_id, rue1, rue2, lat, lon)
+    let mut src_meta: Vec<(String, String, String, f64, f64)> = Vec::new();
+
     for ((instance_id, direction), acc) in list {
         // Prefer hourly records; fall back to daily if no hourly exist
         let chosen = if !acc.hourly.is_empty() { &acc.hourly } else { &acc.daily };
@@ -152,6 +164,7 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
         let earliest = DateTime::from_timestamp(*chosen.keys().next().unwrap(), 0).unwrap();
         let latest   = DateTime::from_timestamp(*chosen.keys().next_back().unwrap(), 0).unwrap();
 
+        src_meta.push((source_id.clone(), acc.rue1.clone(), acc.rue2.clone(), acc.lat, acc.lon));
         sources.push(DataSource {
             id: source_id.clone(), name,
             location: LatLon { lat: acc.lat, lon: acc.lon },
@@ -169,6 +182,72 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
             });
         }
     }
+
+    // ── Synthetic "Total" sources for multi-direction intersections ──────────
+    // Group per-direction sources by their (rue1, rue2) intersection.
+    let mut by_intersection: std::collections::HashMap<
+        (String, String), Vec<(String, f64, f64)> // (source_id, lat, lon)
+    > = std::collections::HashMap::new();
+    for (src_id, rue1, rue2, lat, lon) in &src_meta {
+        by_intersection
+            .entry((rue1.clone(), rue2.clone()))
+            .or_default()
+            .push((src_id.clone(), *lat, *lon));
+    }
+
+    let mut intersection_list: Vec<_> = by_intersection.into_iter().collect();
+    intersection_list.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for ((rue1, rue2), members) in intersection_list {
+        if members.len() < 2 { continue; }
+
+        let total_id = make_total_id(&rue1, &rue2);
+        let name = if rue2.is_empty() {
+            format!("Mtl: {} (Total)", rue1)
+        } else {
+            format!("Mtl: {} @ {} (Total)", rue1, rue2)
+        };
+        let (lat, lon) = (members[0].1, members[0].2);
+        let color = SOURCE_COLORS[color_counter % SOURCE_COLORS.len()].to_string();
+        color_counter += 1;
+
+        // Sum records from all member sources, bucketed by exact timestamp.
+        let mut total_buckets: BTreeMap<i64, f64> = BTreeMap::new();
+        for rec in &records {
+            if members.iter().any(|(id, _, _)| id == &rec.source_id) {
+                *total_buckets.entry(rec.timestamp.timestamp()).or_insert(0.0) += rec.count;
+            }
+        }
+        if total_buckets.is_empty() { continue; }
+
+        let earliest = DateTime::from_timestamp(*total_buckets.keys().next().unwrap(), 0).unwrap();
+        let latest   = DateTime::from_timestamp(*total_buckets.keys().next_back().unwrap(), 0).unwrap();
+
+        // Insert immediately after the last directional source for this
+        // intersection so the total stays grouped with its siblings.
+        let insert_pos = members.iter()
+            .filter_map(|(id, _, _)| sources.iter().rposition(|s| &s.id == id))
+            .max()
+            .map(|i| i + 1)
+            .unwrap_or(sources.len());
+        sources.insert(insert_pos, DataSource {
+            id: total_id.clone(), name,
+            location: LatLon { lat, lon },
+            modalities: vec![Modality::Bikes],
+            earliest, latest,
+            color,
+            loader_type: LoaderType::Discovered,
+        });
+        for (ts_unix, total) in total_buckets {
+            records.push(CountRecord {
+                timestamp: DateTime::from_timestamp(ts_unix, 0).unwrap(),
+                modality:  Modality::Bikes,
+                count:     total,
+                source_id: total_id.clone(),
+            });
+        }
+    }
+
     (sources, records)
 }
 
@@ -245,6 +324,23 @@ pub fn parse_telraam_excel(source_id: &str, bytes: &[u8]) -> Vec<CountRecord> {
     let Some(car_col)  = find("car total")              else { return vec![] };
     let large_col      = find("large vehicle total");
 
+    // Per-direction columns (present in standard Telraam S2 exports).
+    // Column name format: "{Modality} (A > B)" / "{Modality} (B > A)".
+    let bike_ab  = find("bike (a > b)");
+    let bike_ba  = find("bike (b > a)");
+    let ped_ab   = find("pedestrian (a > b)");
+    let ped_ba   = find("pedestrian (b > a)");
+    let car_ab   = find("car (a > b)");
+    let car_ba   = find("car (b > a)");
+    let heavy_ab = find("heavy (a > b)");
+    let heavy_ba = find("heavy (b > a)");
+
+    // Only emit directional records when an annotation is registered for this
+    // segment (which means the corresponding DataSources exist in the catalogue).
+    let emit_dirs = telraam_annotation(source_id).is_some();
+    let atob_id   = format!("{}-atob", source_id);
+    let btoa_id   = format!("{}-btoa", source_id);
+
     let as_f64 = |cell: Option<&Data>| -> f64 {
         cell.map(cell_f64).unwrap_or(0.0)
     };
@@ -268,18 +364,39 @@ pub fn parse_telraam_excel(source_id: &str, bytes: &[u8]) -> Vec<CountRecord> {
         let car   = as_f64(row.get(car_col));
         let truck = large_col.map(|c| as_f64(row.get(c))).unwrap_or(0.0);
 
+        // Total records (both directions combined)
         for (modality, count) in [
             (Modality::Bikes,       bike),
             (Modality::Pedestrians, ped),
             (Modality::Cars,        car),
             (Modality::Trucks,      truck),
         ] {
-            records.push(CountRecord {
-                timestamp: ts,
-                modality,
-                count,
-                source_id: source_id.to_string(),
-            });
+            records.push(CountRecord { timestamp: ts, modality, count,
+                                       source_id: source_id.to_string() });
+        }
+
+        // Per-direction records
+        if emit_dirs {
+            for (sid, cols) in [
+                (atob_id.as_str(), [bike_ab, ped_ab, car_ab, heavy_ab]),
+                (btoa_id.as_str(), [bike_ba, ped_ba, car_ba, heavy_ba]),
+            ] {
+                for (modality, col_opt) in [
+                    (Modality::Bikes,       cols[0]),
+                    (Modality::Pedestrians, cols[1]),
+                    (Modality::Cars,        cols[2]),
+                    (Modality::Trucks,      cols[3]),
+                ] {
+                    if let Some(col) = col_opt {
+                        records.push(CountRecord {
+                            timestamp: ts,
+                            modality,
+                            count: as_f64(row.get(col)),
+                            source_id: sid.to_string(),
+                        });
+                    }
+                }
+            }
         }
     }
 
