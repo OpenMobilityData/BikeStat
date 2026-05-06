@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use crate::data::types::{DataSource, Modality, Resolution};
+use crate::data::types::{DataSource, Modality, Resolution, ViewMode};
 
 #[component]
 pub fn Sidebar(
@@ -20,6 +20,9 @@ pub fn Sidebar(
 
     date_presets: ReadSignal<Vec<(String, String, String)>>,
     on_date_preset: Callback<(String, String)>,
+
+    view_mode: ReadSignal<ViewMode>,
+    on_year_on_year: Callback<()>,
 ) -> impl IntoView {
     view! {
         <aside>
@@ -144,6 +147,11 @@ pub fn Sidebar(
                             </button>
                         }
                     }).collect_view()}
+                    <button
+                        class=move || if view_mode.get() == ViewMode::YearOnYear { "active" } else { "" }
+                        on:click=move |_| on_year_on_year.run(())>
+                        "Year-on-Year"
+                    </button>
                 </div>
             </div>
 

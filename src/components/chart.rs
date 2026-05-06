@@ -37,7 +37,13 @@ fn fmt_count(v: f64) -> String {
 }
 
 #[component]
-pub fn Chart(series: ReadSignal<Vec<Series>>) -> impl IntoView {
+pub fn Chart(
+    series: ReadSignal<Vec<Series>>,
+    /// When Some, fixes the X-axis to the given (start, end) range instead of
+    /// auto-deriving it from the points. Used by Year-on-Year so the axis
+    /// always shows a full 12-month span even with partial data.
+    x_range: ReadSignal<Option<(DateTime<Utc>, DateTime<Utc>)>>,
+) -> impl IntoView {
     let view_box = "0 0 900 400";
     let pad_l = 60.0_f64;
     let pad_r = 20.0_f64;
@@ -48,19 +54,25 @@ pub fn Chart(series: ReadSignal<Vec<Series>>) -> impl IntoView {
 
     let derived = move || {
         let s = series.get();
-        if s.is_empty() || s.iter().all(|ser| ser.points.is_empty()) {
+        let xr = x_range.get();
+        if (s.is_empty() || s.iter().all(|ser| ser.points.is_empty())) && xr.is_none() {
             return None;
         }
 
-        let all_x: Vec<i64> = s.iter()
-            .flat_map(|ser| ser.points.iter().map(|(dt, _)| dt.timestamp()))
-            .collect();
         let all_y: Vec<f64> = s.iter()
             .flat_map(|ser| ser.points.iter().map(|(_, v)| *v))
             .collect();
 
-        let x_min = *all_x.iter().min().unwrap() as f64;
-        let x_max = *all_x.iter().max().unwrap() as f64;
+        let (x_min, x_max) = match xr {
+            Some((lo, hi)) => (lo.timestamp() as f64, hi.timestamp() as f64),
+            None => {
+                let all_x: Vec<i64> = s.iter()
+                    .flat_map(|ser| ser.points.iter().map(|(dt, _)| dt.timestamp()))
+                    .collect();
+                (*all_x.iter().min().unwrap() as f64,
+                 *all_x.iter().max().unwrap() as f64)
+            }
+        };
         let y_min = 0.0_f64;
         let y_max = all_y.iter().cloned().fold(0.0_f64, f64::max) * 1.1;
 
@@ -97,7 +109,8 @@ pub fn Chart(series: ReadSignal<Vec<Series>>) -> impl IntoView {
         }).collect();
 
         // X-axis ticks (up to 8)
-        let x_tick_n = 7.min(s[0].points.len());
+        let max_points = s.iter().map(|ser| ser.points.len()).max().unwrap_or(0);
+        let x_tick_n = 7.min(max_points.max(if xr.is_some() { 7 } else { 0 }));
         let x_ticks: Vec<(f64, String)> = if x_tick_n == 0 { vec![] } else {
             (0..=x_tick_n).map(|i| {
                 let ts = (x_min + x_span * i as f64 / x_tick_n as f64) as i64;

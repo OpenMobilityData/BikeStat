@@ -1,13 +1,15 @@
 mod data;
 mod components;
 
-use chrono::{Datelike, Duration, Months, NaiveDate, TimeZone, Utc};
+use std::collections::BTreeMap;
+
+use chrono::{DateTime, Datelike, Duration, Months, NaiveDate, TimeZone, Utc};
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use data::{loader, sources};
-use data::types::{CountRecord, DataSource, LoaderType, Modality, Resolution};
+use data::types::{CountRecord, DataSource, LoaderType, Modality, Resolution, ViewMode};
 use components::chart::{Chart, Series};
 use components::map::SourceMap;
 use components::sidebar::Sidebar;
@@ -27,6 +29,7 @@ fn App() -> impl IntoView {
     let (selected_srcs, set_selected_srcs) = signal::<Vec<String>>(vec![]);
     let (selected_mods, set_selected_mods) = signal::<Vec<Modality>>(vec![Modality::Bikes]);
     let (resolution,    set_resolution)    = signal(Resolution::Day);
+    let (view_mode,     set_view_mode)     = signal(ViewMode::Linear);
 
     let now = Utc::now();
     let (date_from, set_date_from) = signal(format!("{}-01-01", now.year()));
@@ -47,7 +50,7 @@ fn App() -> impl IntoView {
             add_msg(&set_load_msgs, "⏳ Loading Montréal data…");
             match loader::fetch_montreal_cyclistes().await {
                 Ok((new_srcs, new_recs)) => {
-                    update_date_range(&new_recs, date_from, date_to, set_date_from, set_date_to);
+                    update_date_range(&new_recs, view_mode, date_from, date_to, set_date_from, set_date_to);
                     set_sources.update(|s| s.extend(new_srcs));
                     set_records.update(|r| r.extend(new_recs));
                     remove_msg(&set_load_msgs, "⏳ Loading Montréal data…");
@@ -75,7 +78,7 @@ fn App() -> impl IntoView {
                     add_msg(&set_load_msgs, &msg);
                     match loader::fetch_telraam_excel(&src_id, &url).await {
                         Ok(new_recs) => {
-                            update_date_range(&new_recs, date_from, date_to, set_date_from, set_date_to);
+                            update_date_range(&new_recs, view_mode, date_from, date_to, set_date_from, set_date_to);
                             set_records.update(|r| r.extend(new_recs));
                             remove_msg(&set_load_msgs, &msg);
                         }
@@ -127,8 +130,29 @@ fn App() -> impl IntoView {
     });
 
     let on_date_preset = Callback::new(move |(from, to): (String, String)| {
+        set_view_mode.set(ViewMode::Linear);
         set_date_from.set(from);
         set_date_to.set(to);
+    });
+
+    // Year-on-Year: anchor a 12-month axis at the earliest record matching
+    // the current selection, fold all later years onto that axis, and color
+    // each year-bucket distinctly. No-op if the selection is empty or has
+    // no records yet.
+    let on_year_on_year = Callback::new(move |_: ()| {
+        let recs = records.get_untracked();
+        let mods = selected_mods.get_untracked();
+        let srcs = selected_srcs.get_untracked();
+        let earliest = recs.iter()
+            .filter(|r| mods.contains(&r.modality) && srcs.contains(&r.source_id))
+            .map(|r| r.timestamp)
+            .min();
+        let Some(start) = earliest else { return };
+        let start_d = start.date_naive();
+        let end_d = start_d.checked_add_months(Months::new(12)).unwrap_or(start_d);
+        set_date_from.set(start_d.format("%Y-%m-%d").to_string());
+        set_date_to.set(end_d.format("%Y-%m-%d").to_string());
+        set_view_mode.set(ViewMode::YearOnYear);
     });
 
     // ── Derived chart series ──
@@ -140,6 +164,7 @@ fn App() -> impl IntoView {
         let all_srcs = app_sources.get();
         let from_str = date_from.get();
         let to_str   = date_to.get();
+        let mode     = view_mode.get();
 
         let from_dt = NaiveDate::parse_from_str(&from_str, "%Y-%m-%d")
             .ok().and_then(|d| d.and_hms_opt(0, 0, 0))
@@ -148,32 +173,88 @@ fn App() -> impl IntoView {
             .ok().and_then(|d| d.and_hms_opt(23, 59, 59))
             .map(|ndt| Utc.from_utc_datetime(&ndt));
 
-        let mut out = vec![];
-        for modality in &mods {
-            for src_id in &srcs {
-                if let Some((src_idx, meta)) = all_srcs.iter().enumerate()
-                    .find(|(_, s)| &s.id == src_id)
-                {
-                    if !meta.modalities.contains(modality) { continue; }
-                    let mut pts = loader::aggregate(&recs, *modality, res, Some(src_id));
-                    if let Some(f) = from_dt { pts.retain(|(dt, _)| *dt >= f); }
-                    if let Some(t) = to_dt   { pts.retain(|(dt, _)| *dt <= t); }
-                    if !pts.is_empty() {
-                        out.push(Series {
-                            label:  format!("{} – {}", meta.name, modality.label()),
-                            color:  series_color(*modality, src_idx),
-                            dash:   modality.stroke_dasharray().unwrap_or("").to_string(),
-                            points: pts,
-                        });
+        match mode {
+            ViewMode::Linear => {
+                let mut out = vec![];
+                for modality in &mods {
+                    for src_id in &srcs {
+                        if let Some((src_idx, meta)) = all_srcs.iter().enumerate()
+                            .find(|(_, s)| &s.id == src_id)
+                        {
+                            if !meta.modalities.contains(modality) { continue; }
+                            let mut pts = loader::aggregate(&recs, *modality, res, Some(src_id));
+                            if let Some(f) = from_dt { pts.retain(|(dt, _)| *dt >= f); }
+                            if let Some(t) = to_dt   { pts.retain(|(dt, _)| *dt <= t); }
+                            if !pts.is_empty() {
+                                out.push(Series {
+                                    label:  format!("{} – {}", meta.name, modality.label()),
+                                    color:  series_color(*modality, src_idx),
+                                    dash:   modality.stroke_dasharray().unwrap_or("").to_string(),
+                                    points: pts,
+                                });
+                            }
+                        }
                     }
                 }
+                out
+            }
+            ViewMode::YearOnYear => {
+                let Some(start) = from_dt else { return vec![]; };
+                let mut out = vec![];
+                for modality in &mods {
+                    for src_id in &srcs {
+                        let Some(meta) = all_srcs.iter().find(|s| &s.id == src_id) else { continue };
+                        if !meta.modalities.contains(modality) { continue; }
+                        let pts = loader::aggregate(&recs, *modality, res, Some(src_id));
+                        if pts.is_empty() { continue; }
+
+                        // Bucket each point by integer years past `start`,
+                        // then shift each bucket back onto the [start, +12mo) axis.
+                        let mut by_year: BTreeMap<i32, Vec<(DateTime<Utc>, f64)>> = BTreeMap::new();
+                        for (t, v) in pts {
+                            let yo = year_offset(t, start);
+                            if yo < 0 { continue; }
+                            by_year.entry(yo).or_default().push((shift_back_years(t, yo), v));
+                        }
+                        for (yo, year_pts) in by_year {
+                            let y0 = start.year() + yo;
+                            let year_label = if start.month() == 1 && start.day() == 1 {
+                                y0.to_string()
+                            } else {
+                                format!("{}–{}", y0, y0 + 1)
+                            };
+                            out.push(Series {
+                                label:  format!("{} – {} ({})", meta.name, modality.label(), year_label),
+                                color:  yoy_color(yo),
+                                dash:   modality.stroke_dasharray().unwrap_or("").to_string(),
+                                points: year_pts,
+                            });
+                        }
+                    }
+                }
+                out
             }
         }
-        out
     };
 
     let (chart_sig, set_chart_sig) = signal::<Vec<Series>>(vec![]);
     Effect::new(move |_| set_chart_sig.set(chart_series()));
+
+    // X-axis override: a fixed 12-month range when in YearOnYear mode.
+    let (x_range_sig, set_x_range_sig) =
+        signal::<Option<(DateTime<Utc>, DateTime<Utc>)>>(None);
+    Effect::new(move |_| {
+        let xr = if view_mode.get() == ViewMode::YearOnYear {
+            NaiveDate::parse_from_str(&date_from.get(), "%Y-%m-%d").ok()
+                .and_then(|d| {
+                    let end_d = d.checked_add_months(Months::new(12))?;
+                    let start = Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0)?);
+                    let end   = Utc.from_utc_datetime(&end_d.and_hms_opt(23, 59, 59)?);
+                    Some((start, end))
+                })
+        } else { None };
+        set_x_range_sig.set(xr);
+    });
 
     // Status bar: show all in-flight or error messages
     let status_text = move || {
@@ -207,10 +288,13 @@ fn App() -> impl IntoView {
 
                 date_presets=date_presets
                 on_date_preset=on_date_preset
+
+                view_mode=view_mode
+                on_year_on_year=on_year_on_year
             />
 
             <main>
-                <Chart series=chart_sig />
+                <Chart series=chart_sig x_range=x_range_sig />
                 <SourceMap
                     sources=app_sources
                     selected=selected_srcs
@@ -225,13 +309,18 @@ fn App() -> impl IntoView {
 
 /// Expand the visible date window to include all timestamps in `recs`.
 /// Never shrinks an existing bound — only moves `from` earlier or `to` later.
+/// Skipped while in YearOnYear mode so late-arriving data doesn't shift the
+/// 12-month axis out from under the user.
 fn update_date_range(
     recs: &[CountRecord],
+    view_mode: ReadSignal<ViewMode>,
     date_from: ReadSignal<String>,
     date_to:   ReadSignal<String>,
     set_from:  WriteSignal<String>,
     set_to:    WriteSignal<String>,
 ) {
+    if view_mode.get_untracked() == ViewMode::YearOnYear { return; }
+
     let (Some(new_first), Some(new_last)) = (
         recs.iter().map(|r| r.timestamp).min(),
         recs.iter().map(|r| r.timestamp).max(),
@@ -378,6 +467,34 @@ fn series_color(modality: Modality, source_idx: usize) -> String {
     // Lightness steps chosen for dark-theme legibility; spread across 8 levels.
     const LEVELS: &[f64] = &[0.65, 0.48, 0.78, 0.40, 0.84, 0.56, 0.72, 0.44];
     hsl_to_hex(hue, sat, LEVELS[source_idx % LEVELS.len()])
+}
+
+/// Number of full 12-month periods between `start` and `t`, using calendar
+/// month/day comparison (so leap years don't shift the boundary).  Negative
+/// when `t` is before `start`.
+fn year_offset(t: DateTime<Utc>, start: DateTime<Utc>) -> i32 {
+    let mut offset = t.year() - start.year();
+    if (t.month(), t.day()) < (start.month(), start.day()) {
+        offset -= 1;
+    }
+    offset
+}
+
+/// Subtract `years` calendar years from `t`. Uses chrono's `Months` so a
+/// Feb 29 in a leap year maps to Feb 28 in non-leap years rather than failing.
+fn shift_back_years(t: DateTime<Utc>, years: i32) -> DateTime<Utc> {
+    if years <= 0 { return t; }
+    let date = t.date_naive()
+        .checked_sub_months(Months::new(12 * years as u32))
+        .unwrap_or_else(|| t.date_naive());
+    Utc.from_utc_datetime(&date.and_time(t.time()))
+}
+
+/// Distinct-hue palette for Year-on-Year buckets, tuned for the dark theme.
+fn yoy_color(year_offset: i32) -> String {
+    const HUES: &[f64] = &[210.0, 30.0, 130.0, 290.0, 0.0, 60.0];
+    let h = HUES[year_offset.unsigned_abs() as usize % HUES.len()];
+    hsl_to_hex(h, 0.70, 0.62)
 }
 
 fn hsl_to_hex(h: f64, s: f64, l: f64) -> String {

@@ -51,6 +51,12 @@ impl Modality {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Resolution { Hour, Day, Week, Month }
 
+/// How the chart plots time. `Linear` is the default — one continuous time
+/// axis. `YearOnYear` collapses every 12-month block of data onto a shared
+/// 12-month axis so seasonal patterns can be compared across years.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ViewMode { Linear, YearOnYear }
+
 impl Resolution {
     pub fn label(&self) -> &'static str {
         match self {
