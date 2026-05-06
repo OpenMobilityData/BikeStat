@@ -129,7 +129,7 @@ pub fn Chart(
         <div class="chart-container">
             // ── Chart SVG ──
             {move || match derived() {
-                None => view! { <div class="placeholder">"Select a data source to begin"</div> }.into_any(),
+                None => view! { <div class="placeholder">"Select a location to begin"</div> }.into_any(),
                 Some((paths, y_ticks, x_ticks)) => view! {
                     <svg viewBox=view_box preserveAspectRatio="none">
                         // Grid lines
