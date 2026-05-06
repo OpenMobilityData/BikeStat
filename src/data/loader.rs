@@ -415,6 +415,109 @@ pub async fn fetch_telraam_excel(source_id: &str, url: &str) -> Result<Vec<Count
     Ok(parse_telraam_excel(source_id, &bytes))
 }
 
+// ── Telraam API JSON ─────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct TelraamApiResponse {
+    report: Vec<TelraamApiHour>,
+}
+
+/// One hourly bucket from `POST /v1/reports/traffic`.  Counts are
+/// uptime-corrected floats (Telraam scales raw counts by `1/uptime`),
+/// `*_lft` / `*_rgt` are the directional splits.
+#[derive(serde::Deserialize)]
+struct TelraamApiHour {
+    /// "YYYY-MM-DD HH:MM:SSZ" in UTC (note: space, not T, before the time).
+    date: String,
+    #[serde(default)] bike: Option<f64>,
+    #[serde(default)] pedestrian: Option<f64>,
+    #[serde(default)] car: Option<f64>,
+    #[serde(default)] heavy: Option<f64>,
+    #[serde(default)] bike_lft: Option<f64>,
+    #[serde(default)] bike_rgt: Option<f64>,
+    #[serde(default)] pedestrian_lft: Option<f64>,
+    #[serde(default)] pedestrian_rgt: Option<f64>,
+    #[serde(default)] car_lft: Option<f64>,
+    #[serde(default)] car_rgt: Option<f64>,
+    #[serde(default)] heavy_lft: Option<f64>,
+    #[serde(default)] heavy_rgt: Option<f64>,
+}
+
+/// Parse a Telraam `/v1/reports/traffic` response body and emit one
+/// `CountRecord` per modality per hour, plus per-direction records under
+/// `<source_id>-atob` / `<source_id>-btoa` when an annotation is registered.
+///
+/// Direction mapping: Telraam's `*_lft` → A→B (atob), `*_rgt` → B→A (btoa).
+/// If a segment's directional labels look swapped after first deploy, flip
+/// these two assignments.
+pub fn parse_telraam_api(source_id: &str, json_bytes: &[u8]) -> Vec<CountRecord> {
+    let resp: TelraamApiResponse = match serde_json::from_slice(json_bytes) {
+        Ok(r) => r,
+        Err(e) => {
+            web_sys::console::error_1(&format!("Telraam API parse failed: {:?}", e).into());
+            return vec![];
+        }
+    };
+
+    let emit_dirs = telraam_annotation(source_id).is_some();
+    let atob_id   = format!("{}-atob", source_id);
+    let btoa_id   = format!("{}-btoa", source_id);
+
+    let mut records = Vec::new();
+    for hour in resp.report {
+        // Telraam serializes UTC timestamps as "YYYY-MM-DD HH:MM:SSZ".
+        // Rewrite the space to a T so chrono's RFC 3339 parser accepts it.
+        let iso = hour.date.replacen(' ', "T", 1);
+        let Ok(ts) = DateTime::parse_from_rfc3339(&iso) else { continue };
+        let ts = ts.with_timezone(&Utc);
+
+        for (modality, count) in [
+            (Modality::Bikes,       hour.bike),
+            (Modality::Pedestrians, hour.pedestrian),
+            (Modality::Cars,        hour.car),
+            (Modality::Trucks,      hour.heavy),
+        ] {
+            if let Some(c) = count {
+                records.push(CountRecord { timestamp: ts, modality, count: c,
+                                           source_id: source_id.to_string() });
+            }
+        }
+
+        if emit_dirs {
+            for (sid, vals) in [
+                (atob_id.as_str(), [hour.bike_lft, hour.pedestrian_lft, hour.car_lft, hour.heavy_lft]),
+                (btoa_id.as_str(), [hour.bike_rgt, hour.pedestrian_rgt, hour.car_rgt, hour.heavy_rgt]),
+            ] {
+                for (modality, v) in [
+                    (Modality::Bikes,       vals[0]),
+                    (Modality::Pedestrians, vals[1]),
+                    (Modality::Cars,        vals[2]),
+                    (Modality::Trucks,      vals[3]),
+                ] {
+                    if let Some(c) = v {
+                        records.push(CountRecord { timestamp: ts, modality, count: c,
+                                                   source_id: sid.to_string() });
+                    }
+                }
+            }
+        }
+    }
+    records
+}
+
+/// Fetch a cron-written Telraam API JSON snapshot and parse it. A 404 is
+/// treated as "cron hasn't produced one yet" and returns an empty record
+/// set (no error), so the page still works on first deploy or in dev.
+pub async fn fetch_telraam_api(source_id: &str, url: &str) -> Result<Vec<CountRecord>, String> {
+    let resp = gloo_net::http::Request::get(url)
+        .send().await
+        .map_err(|e| format!("Fetch error: {:?}", e))?;
+    if resp.status() == 404 { return Ok(vec![]); }
+    if !resp.ok() { return Err(format!("HTTP {}", resp.status())); }
+    let bytes = resp.binary().await.map_err(|e| format!("Binary error: {:?}", e))?;
+    Ok(parse_telraam_api(source_id, &bytes))
+}
+
 /// Parse a CDN-NDG access-to-information eco-counter Excel export.
 ///
 /// Layout (ad hoc, set by the borough):

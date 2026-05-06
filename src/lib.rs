@@ -120,7 +120,7 @@ fn App() -> impl IntoView {
                     match loader::fetch_telraam_excel(&src_id, &url).await {
                         Ok(new_recs) => {
                             update_date_range(&new_recs, view_mode, date_from, date_to, set_date_from, set_date_to);
-                            set_records.update(|r| r.extend(new_recs));
+                            set_records.update(|r| dedup_extend(r, new_recs));
                             remove_msg(&set_load_msgs, &msg);
                         }
                         Err(e) => {
@@ -130,6 +130,32 @@ fn App() -> impl IntoView {
                     }
                 });
             }
+        }
+    }
+
+    // ── Fetch each Telraam API JSON snapshot (written by hourly server cron) ──
+    // 404 means cron hasn't produced one yet (e.g. fresh deploy) — silent
+    // skip so the page still works off the historical xlsx alone.
+    for src in &telraam {
+        if matches!(src.loader_type, LoaderType::TelraamExcel { .. }) {
+            let src_id    = src.id.clone();
+            let url       = format!("data/telraam/{}/api.json", src.id);
+            let src_name  = src.name.clone();
+            let set_records   = set_records.clone();
+            let set_load_msgs = set_load_msgs.clone();
+            spawn_local(async move {
+                match loader::fetch_telraam_api(&src_id, &url).await {
+                    Ok(new_recs) if !new_recs.is_empty() => {
+                        update_date_range(&new_recs, view_mode, date_from, date_to, set_date_from, set_date_to);
+                        set_records.update(|r| dedup_extend(r, new_recs));
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        let msg = format!("⚠ {} (API): {}", src_name, e);
+                        add_msg(&set_load_msgs, &msg);
+                    }
+                }
+            });
         }
     }
 
@@ -431,6 +457,25 @@ fn update_date_range(
 
     set_from.set(from.format("%Y-%m-%d").to_string());
     set_to.set(to.format("%Y-%m-%d").to_string());
+}
+
+/// Append `new_recs` to `records`, skipping any whose `(source_id,
+/// timestamp, modality)` key already exists.  Telraam's API window can
+/// overlap the historical xlsx range; without dedup the chart would
+/// double-count those hours.  Whichever loader writes first wins —
+/// acceptable since the legacy and S2 sensors should report comparable
+/// values for the same physical location.
+fn dedup_extend(records: &mut Vec<CountRecord>, new_recs: Vec<CountRecord>) {
+    use std::collections::HashSet;
+    let mut seen: HashSet<(String, i64, Modality)> = records.iter()
+        .map(|r| (r.source_id.clone(), r.timestamp.timestamp(), r.modality))
+        .collect();
+    for rec in new_recs {
+        let key = (rec.source_id.clone(), rec.timestamp.timestamp(), rec.modality);
+        if seen.insert(key) {
+            records.push(rec);
+        }
+    }
 }
 
 fn add_msg(signal: &WriteSignal<Vec<String>>, msg: &str) {

@@ -19,4 +19,5 @@ trunk build --release
 rsync -av --delete \
     --exclude='data/cyclistes.csv' \
     --exclude='data/status.txt' \
+    --exclude='data/telraam/*/api.json' \
     dist/ "${REMOTE}:${DEST}"
