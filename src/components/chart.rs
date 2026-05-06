@@ -1,6 +1,9 @@
 use chrono::{DateTime, Utc};
+use chrono_tz::America::Montreal as MontrealTz;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
+
+use crate::data::types::Resolution;
 
 #[derive(Clone, PartialEq)]
 pub struct Series {
@@ -116,6 +119,19 @@ struct HoverRow {
     point_y: f64,
 }
 
+/// Format the tooltip's lead-in date. For Hour resolution, surface the
+/// Montreal local time (so tooltips read like commute times instead of
+/// UTC offsets). For coarser resolutions, drop the time entirely — the
+/// bucket's hour is just an artifact of UTC-midnight bucketing.
+fn format_hover_date(ts: DateTime<Utc>, res: Resolution) -> String {
+    match res {
+        Resolution::Hour => ts.with_timezone(&MontrealTz)
+            .format("%Y-%m-%d %H:%M %Z").to_string(),
+        Resolution::Day | Resolution::Week | Resolution::Month =>
+            ts.format("%Y-%m-%d").to_string(),
+    }
+}
+
 #[component]
 pub fn Chart(
     series: ReadSignal<Vec<Series>>,
@@ -123,6 +139,8 @@ pub fn Chart(
     /// auto-deriving it from the points. Used by Year-on-Year so the axis
     /// always shows a full 12-month span even with partial data.
     x_range: ReadSignal<Option<(DateTime<Utc>, DateTime<Utc>)>>,
+    /// Current bucket resolution; used to format the tooltip date.
+    resolution: ReadSignal<Resolution>,
 ) -> impl IntoView {
     let view_box = "0 0 900 400";
     let pad_l = 60.0_f64;
@@ -321,8 +339,9 @@ pub fn Chart(
 
             // ── Hover tooltip (HTML, position: fixed to avoid clipping) ──
             {move || hover.get().map(|hi| {
+                let res = resolution.get();
                 let date = hi.rows.first()
-                    .map(|r| r.timestamp.format("%Y-%m-%d %H:%M UTC").to_string())
+                    .map(|r| format_hover_date(r.timestamp, res))
                     .unwrap_or_default();
                 view! {
                     <div class="chart-tooltip"

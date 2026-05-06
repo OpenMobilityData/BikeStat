@@ -352,7 +352,7 @@ fn App() -> impl IntoView {
             />
 
             <main>
-                <Chart series=chart_sig x_range=x_range_sig />
+                <Chart series=chart_sig x_range=x_range_sig resolution=resolution />
                 <SourceMap
                     sources=app_sources
                     selected=selected_srcs
