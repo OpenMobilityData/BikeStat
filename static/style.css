@@ -59,6 +59,14 @@ header .load-status {
     color: var(--text-muted);
 }
 
+header .data-status {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-left: 1rem;
+}
+
+header .data-status:empty { display: none; }
+
 /* ── Sidebar ── */
 aside {
     grid-area: sidebar;

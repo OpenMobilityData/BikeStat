@@ -1,10 +1,16 @@
 use chrono::{DateTime, TimeZone, Utc};
 use crate::data::types::{DataSource, LatLon, LoaderType, Modality};
 
-/// Montreal open data: all cyclist counters in a single CSV.
-pub const MONTREAL_CYCLISTES_URL: &str = "https://donnees.montreal.ca/dataset/\
-    142ff2e9-7d0a-47d6-b4f6-dfeb97041daf/resource/\
-    a8e463ab-d334-4714-81d5-8da0310d80c0/download/cyclistes.csv";
+/// VdM cyclistes CSV, served same-origin.  An hourly cron job on the server
+/// fetches the upstream URL below and atomically replaces this file.  For
+/// local dev, populate `static/data/cyclistes.csv` once with:
+///
+/// ```bash
+/// curl -fsS \
+///   "https://donnees.montreal.ca/dataset/142ff2e9-7d0a-47d6-b4f6-dfeb97041daf/resource/a8e463ab-d334-4714-81d5-8da0310d80c0/download/cyclistes.csv" \
+///   -o static/data/cyclistes.csv
+/// ```
+pub const MONTREAL_CYCLISTES_URL: &str = "data/cyclistes.csv";
 
 /// Whitelist of Montreal locations to include, matched case-insensitively as
 /// substrings against (rue_1, rue_2).  `None` = include all locations.

@@ -1,3 +1,7 @@
 /target
 /dist
 Cargo.lock
+
+# Populated at deploy time by the hourly cron, or once locally for dev.
+static/data/cyclistes.csv
+static/data/status.txt

@@ -45,6 +45,29 @@ fn App() -> impl IntoView {
         s.extend(cdn_ndg.clone());
     });
 
+    // ── Data freshness indicator ──
+    // Server cron writes a short string (e.g. "VdM data: 2026-05-06 14:00 EDT")
+    // to data/status.txt after each successful refresh.  Some web servers
+    // (including `trunk serve` and lighttpd in SPA-fallback mode) return
+    // index.html with a 200 status when the requested file is missing, so
+    // validate the response shape before trusting it.
+    let (data_status, set_data_status) = signal::<Option<String>>(None);
+    spawn_local(async move {
+        if let Ok(resp) = gloo_net::http::Request::get("data/status.txt").send().await {
+            if resp.ok() {
+                if let Ok(text) = resp.text().await {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty()
+                        && trimmed.len() < 200
+                        && !trimmed.starts_with('<')
+                    {
+                        set_data_status.set(Some(trimmed.to_string()));
+                    }
+                }
+            }
+        }
+    });
+
     // ── Fetch Montreal data ──
     {
         let set_sources   = set_sources.clone();
@@ -300,6 +323,9 @@ fn App() -> impl IntoView {
                 <h1>"BikeStat"</h1>
                 <span class="subtitle">"Traffic Count Aggregator"</span>
                 <span class="load-status">{status_text}</span>
+                <span class="data-status">
+                    {move || data_status.get().unwrap_or_default()}
+                </span>
             </header>
 
             <Sidebar
