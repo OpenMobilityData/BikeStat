@@ -518,7 +518,6 @@ fn series_color(modality: Modality, source_idx: usize) -> String {
         Modality::Pedestrians => 0.52,
         Modality::Bikes       => 0.62,
         Modality::Cars        => 0.72,
-        Modality::Motorcycles => 0.80,
     };
     hsl_to_hex(hue, 0.72, lightness)
 }

@@ -7,7 +7,6 @@ pub enum Modality {
     Pedestrians,
     Cars,
     Trucks,
-    Motorcycles,
 }
 
 impl Modality {
@@ -17,7 +16,6 @@ impl Modality {
             Self::Pedestrians => "Pedestrians",
             Self::Cars        => "Cars",
             Self::Trucks      => "Trucks",
-            Self::Motorcycles => "Motorcycles",
         }
     }
 
@@ -27,7 +25,6 @@ impl Modality {
             Self::Pedestrians => "#f5a623",
             Self::Cars        => "#4a9eff",
             Self::Trucks      => "#7ed321",
-            Self::Motorcycles => "#bd10e0",
         }
     }
 
@@ -39,12 +36,11 @@ impl Modality {
             Self::Pedestrians => Some("5 3"),
             Self::Cars        => Some("2 3"),
             Self::Trucks      => Some("8 3 2 3"),
-            Self::Motorcycles => Some("12 4"),
         }
     }
 
     pub fn all() -> &'static [Modality] {
-        &[Self::Bikes, Self::Pedestrians, Self::Cars, Self::Trucks, Self::Motorcycles]
+        &[Self::Bikes, Self::Pedestrians, Self::Cars, Self::Trucks]
     }
 }
 
