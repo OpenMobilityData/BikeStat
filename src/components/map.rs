@@ -5,6 +5,12 @@ const TILE_SIZE: f64 = 256.0;
 /// Width target used to pick the zoom level. Actual container may be wider.
 const ZOOM_TARGET_W: f64 = 1100.0;
 const VIEWPORT_H: f64 = 220.0;
+/// Actual rendered map height on narrow viewports — must match the mobile
+/// override of `.map-container { height: … }` in style.css.
+const VIEWPORT_H_MOBILE: f64 = 160.0;
+/// Width breakpoint below which the mobile map height applies; matches the
+/// `@media (max-width: 768px)` rule in style.css.
+const MOBILE_BREAKPOINT_W: f64 = 768.0;
 /// After picking integer zoom, markers are scaled up to fill this fraction
 /// of the constraining viewport dimension (CSS transform on .map-content).
 const FIT_FRACTION: f64 = 0.70;
@@ -87,8 +93,21 @@ pub fn SourceMap(
                 let sel      = selected.get();
                 let is_empty = all_srcs.is_empty();
 
+                // Pick effective viewport dimensions: on narrow viewports the
+                // map container is shorter (see style.css mobile rules) and
+                // the actual width of the column is roughly window-width, so
+                // both the integer-zoom pick and the scale-to-fit calc need
+                // to use the smaller box. Otherwise markers fit a 220×1100
+                // conceptual box and overflow the actual mobile container.
+                let win_w = web_sys::window()
+                    .and_then(|w| w.inner_width().ok().and_then(|v| v.as_f64()))
+                    .unwrap_or(ZOOM_TARGET_W);
+                let is_mobile = win_w <= MOBILE_BREAKPOINT_W;
+                let target_w = if is_mobile { win_w } else { ZOOM_TARGET_W };
+                let target_h = if is_mobile { VIEWPORT_H_MOBILE } else { VIEWPORT_H };
+
                 let (lat0, lat1, lon0, lon1) = marker_bbox(&srcs);
-                let zoom = pick_zoom(lat0, lat1, lon0, lon1, ZOOM_TARGET_W, VIEWPORT_H);
+                let zoom = pick_zoom(lat0, lat1, lon0, lon1, target_w, target_h);
                 let (cx_tile, cy_tile) = lat_lon_to_tile(
                     (lat0 + lat1) / 2.0, (lon0 + lon1) / 2.0, zoom,
                 );
@@ -99,13 +118,13 @@ pub fn SourceMap(
                 let (mx1, my1) = lat_lon_to_tile(lat0, lon1, zoom);
                 let marker_w_px = ((mx1 - mx0) * TILE_SIZE).max(1.0);
                 let marker_h_px = ((my1 - my0) * TILE_SIZE).max(1.0);
-                let scale_w = ZOOM_TARGET_W * FIT_FRACTION / marker_w_px;
-                let scale_h = VIEWPORT_H     * FIT_FRACTION / marker_h_px;
+                let scale_w = target_w * FIT_FRACTION / marker_w_px;
+                let scale_h = target_h * FIT_FRACTION / marker_h_px;
                 let scale = scale_w.min(scale_h).clamp(1.0, MAX_SCALE);
 
                 // Tile grid covers the visible viewport in *scaled* pixels.
                 let half_w_tiles = (ASSUMED_MAX_VIEWPORT_W / 2.0 / scale / TILE_SIZE) + 1.0;
-                let half_h_tiles = (VIEWPORT_H            / 2.0 / scale / TILE_SIZE) + 1.0;
+                let half_h_tiles = (target_h              / 2.0 / scale / TILE_SIZE) + 1.0;
                 let tx_min = (cx_tile - half_w_tiles).floor() as i64;
                 let tx_max = (cx_tile + half_w_tiles).floor() as i64;
                 let ty_min = (cy_tile - half_h_tiles).floor() as i64;
@@ -143,10 +162,10 @@ pub fn SourceMap(
                     } else {
                         String::new()
                     };
-                    // If the dot sits in the bottom portion of the viewport, flip the
-                    // label above it so it doesn't get clipped by overflow:hidden.
-                    let dot_screen_y = VIEWPORT_H / 2.0 + off_y * scale;
-                    let label_above  = dot_screen_y > VIEWPORT_H - 36.0;
+                    // If the dot sits low enough that its label would clip past
+                    // the bottom of the actual map container, flip it above.
+                    let dot_actual_y = target_h / 2.0 + off_y * scale;
+                    let label_above  = dot_actual_y > target_h - 30.0;
                     let class = match (is_sel, label_above) {
                         (true,  true)  => "map-marker selected label-above",
                         (true,  false) => "map-marker selected",

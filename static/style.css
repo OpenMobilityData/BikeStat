@@ -428,3 +428,59 @@ main {
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: var(--panel); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Mobile-only toggle button — hidden on desktop. */
+.mobile-toggle { display: none; }
+
+/* ── Narrow viewports (phones) ── */
+@media (max-width: 768px) {
+    html, body { font-size: 15px; }
+
+    /* Single column: header, then main; sidebar is a drawer below the header
+       that's only present when sidebar-open is set on #app. */
+    #app {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+            "header"
+            "main";
+    }
+    #app.sidebar-open {
+        grid-template-areas:
+            "header"
+            "sidebar"
+            "main";
+        grid-template-rows: auto auto 1fr;
+    }
+    aside { display: none; }
+    #app.sidebar-open aside {
+        display: flex;
+        max-height: 60vh;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .mobile-toggle {
+        display: inline-flex;
+        align-items: center;
+        font-size: 0.85rem;
+        padding: 0.4rem 0.7rem;
+    }
+
+    /* Header tightens up; load-status falls below the title to avoid wrap. */
+    header { flex-wrap: wrap; padding: 0.6rem 0.85rem; gap: 0.6rem; }
+    header h1 { font-size: 1rem; }
+    header .subtitle { display: none; }
+    header .load-status,
+    header .data-status { font-size: 0.72rem; margin-left: 0; }
+
+    /* Larger tap targets across the sidebar. */
+    button { padding: 0.5rem 0.85rem; font-size: 0.85rem; }
+    .source-item { padding: 0.55rem 0.7rem; }
+    .source-name { font-size: 0.85rem; }
+
+    /* Map shrinks so the chart keeps the dominant viewport space. */
+    .map-container { height: 160px; }
+
+    /* Tooltip can hit the screen edges — let it wrap rather than overflow. */
+    .chart-tooltip { white-space: normal; max-width: 70vw; }
+}

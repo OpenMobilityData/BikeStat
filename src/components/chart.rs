@@ -167,6 +167,13 @@ pub fn Chart(
 
     let (hover, set_hover) = signal::<Option<HoverInfo>>(None);
 
+    // Clear the (position: fixed) tooltip when the user scrolls the page or
+    // taps anywhere outside the chart (e.g. opens the Filters panel). The
+    // chart's own touch handler calls stop_propagation, so taps on the chart
+    // itself don't reach this listener.
+    let _ = leptos::prelude::window_event_listener(leptos::ev::scroll, move |_| set_hover.set(None));
+    let _ = leptos::prelude::window_event_listener(leptos::ev::touchstart, move |_| set_hover.set(None));
+
     let derived = move || {
         let s = series.get();
         let xr = x_range.get();
@@ -246,21 +253,16 @@ pub fn Chart(
         Some((paths, y_ticks, x_ticks))
     };
 
-    // Mouse handlers for the transparent overlay rect.
-    let on_move = move |ev: web_sys::MouseEvent| {
+    // Compute hover state for a pointer at given viewport coordinates over the
+    // overlay rect.  Shared by mouse and touch handlers so both input modes
+    // produce identical crosshair + tooltip behavior.
+    let compute_hover = move |client_x: f64, client_y: f64, rect: web_sys::DomRect, force_flip_y: bool| -> Option<HoverInfo> {
         let s = series.get();
         let xr = x_range.get();
-        let Some(g) = compute_geom(&s, xr, pad_l, pad_t, w, h) else {
-            set_hover.set(None);
-            return;
-        };
+        let g = compute_geom(&s, xr, pad_l, pad_t, w, h)?;
 
-        let Some(target) = ev.current_target() else { return };
-        let Ok(elem) = target.dyn_into::<web_sys::Element>() else { return };
-        let rect = elem.get_bounding_client_rect();
-
-        let pointer_x_in_overlay = ev.client_x() as f64 - rect.left();
-        let pointer_y_in_overlay = ev.client_y() as f64 - rect.top();
+        let pointer_x_in_overlay = client_x - rect.left();
+        let pointer_y_in_overlay = client_y - rect.top();
         let frac_x = (pointer_x_in_overlay / rect.width().max(1.0)).clamp(0.0, 1.0);
         let frac_y = (pointer_y_in_overlay / rect.height().max(1.0)).clamp(0.0, 1.0);
 
@@ -291,10 +293,7 @@ pub fn Chart(
             }
         }
 
-        let Some(anchor_ts) = anchor_ts else {
-            set_hover.set(None);
-            return;
-        };
+        let anchor_ts = anchor_ts?;
         let anchor_secs = anchor_ts.timestamp() as f64;
 
         // Per-series readout: look up the value at the anchor timestamp by
@@ -317,10 +316,7 @@ pub fn Chart(
             })
         }).collect();
 
-        if rows.is_empty() {
-            set_hover.set(None);
-            return;
-        }
+        if rows.is_empty() { return None; }
 
         let crosshair_x = g.to_x(anchor_ts.timestamp());
 
@@ -333,21 +329,34 @@ pub fn Chart(
                 w.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(1080.0),
             ))
             .unwrap_or((1920.0, 1080.0));
-        let client_x = ev.client_x() as f64;
-        let client_y = ev.client_y() as f64;
         let flip_x = client_x + 300.0 > viewport.0;
-        let flip_y = client_y + 200.0 > viewport.1;
+        // For touch input, force the tooltip above the contact point so the
+        // finger doesn't cover it.
+        let flip_y = force_flip_y || client_y + 200.0 > viewport.1;
 
-        set_hover.set(Some(HoverInfo {
-            crosshair_x,
-            client_x,
-            client_y,
-            flip_x,
-            flip_y,
-            rows,
-        }));
+        Some(HoverInfo { crosshair_x, client_x, client_y, flip_x, flip_y, rows })
+    };
+
+    let on_move = move |ev: web_sys::MouseEvent| {
+        let Some(target) = ev.current_target() else { return };
+        let Ok(elem) = target.dyn_into::<web_sys::Element>() else { return };
+        let rect = elem.get_bounding_client_rect();
+        set_hover.set(compute_hover(ev.client_x() as f64, ev.client_y() as f64, rect, false));
     };
     let on_leave = move |_: web_sys::MouseEvent| set_hover.set(None);
+    let on_touch = move |ev: web_sys::TouchEvent| {
+        // Block page scroll while scrubbing the chart with a finger, and
+        // stop the event from bubbling to the window-level "clear hover"
+        // listener — otherwise our own taps would dismiss the tooltip.
+        ev.prevent_default();
+        ev.stop_propagation();
+        let Some(touch) = ev.touches().get(0) else { return };
+        let Some(target) = ev.current_target() else { return };
+        let Ok(elem) = target.dyn_into::<web_sys::Element>() else { return };
+        let rect = elem.get_bounding_client_rect();
+        // force_flip_y=true so the tooltip floats above the finger.
+        set_hover.set(compute_hover(touch.client_x() as f64, touch.client_y() as f64, rect, true));
+    };
 
     view! {
         <div class="chart-container">
@@ -409,7 +418,9 @@ pub fn Chart(
                               x=pad_l y=pad_t width=w height=h
                               fill="transparent"
                               on:mousemove=on_move
-                              on:mouseleave=on_leave />
+                              on:mouseleave=on_leave
+                              on:touchstart=on_touch.clone()
+                              on:touchmove=on_touch />
 
                         // Crosshair + per-series dots, drawn last so they sit
                         // above everything else.  pointer-events: none in CSS

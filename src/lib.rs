@@ -35,6 +35,11 @@ fn App() -> impl IntoView {
     let (date_from, set_date_from) = signal(format!("{}-01-01", now.year()));
     let (date_to,   set_date_to)   = signal(format!("{}-12-31", now.year()));
 
+    // Filter panel toggle for narrow viewports.  CSS hides the sidebar by
+    // default below ~768px and reveals it when this is true.  On wider
+    // viewports the CSS rule has no effect — sidebar is always visible.
+    let (sidebar_open, set_sidebar_open) = signal(false);
+
     // ── Seed catalogue with pre-configured sources immediately ──
     // Their records load asynchronously below; the entries appear in the
     // sidebar right away so the user can see what is expected.
@@ -318,8 +323,12 @@ fn App() -> impl IntoView {
     };
 
     view! {
-        <div id="app">
+        <div id="app" class:sidebar-open=move || sidebar_open.get()>
             <header>
+                <button class="mobile-toggle"
+                        on:click=move |_| set_sidebar_open.update(|v| *v = !*v)>
+                    {move || if sidebar_open.get() { "Close" } else { "Filters" }}
+                </button>
                 <h1>"BikeStat"</h1>
                 <span class="subtitle">"Traffic Count Aggregator"</span>
                 <span class="load-status">{status_text}</span>
