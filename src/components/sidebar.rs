@@ -26,26 +26,72 @@ pub fn Sidebar(
             <div class="control-group">
                 <label class="section-label">"Locations"</label>
                 <div class="source-list">
-                    {move || sources.get().into_iter().map(|src| {
-                        let sel = selected_sources.get().contains(&src.id);
-                        let id = src.id.clone();
-                        let on_source_toggle = on_source_toggle.clone();
-                        view! {
-                            <div class=if sel { "source-item selected" } else { "source-item" }
-                                 on:click=move |_| on_source_toggle.run(id.clone())>
-                                <span class="source-dot"
-                                      style=format!("background:{}", src.color)/>
-                                <div>
-                                    <div class="source-name">{src.name.clone()}</div>
-                                    <div class="source-dates">
-                                        {src.earliest.format("%Y").to_string()}
-                                        " – "
-                                        {src.latest.format("%Y").to_string()}
-                                    </div>
-                                </div>
-                            </div>
+                    {move || {
+                        // Collect consecutive sources that share the same group key
+                        // into clusters; standalone sources form single-item clusters.
+                        let srcs = sources.get();
+                        let mut clusters: Vec<Vec<DataSource>> = Vec::new();
+                        for src in srcs {
+                            let same = clusters.last()
+                                .and_then(|c: &Vec<_>| c[0].group.as_ref())
+                                .zip(src.group.as_ref())
+                                .map(|(a, b)| a == b)
+                                .unwrap_or(false);
+                            if same { clusters.last_mut().unwrap().push(src); }
+                            else    { clusters.push(vec![src]); }
                         }
-                    }).collect_view()}
+
+                        clusters.into_iter().map(|cluster| {
+                            let on_toggle = on_source_toggle.clone();
+                            if cluster.len() == 1 {
+                                let src = cluster.into_iter().next().unwrap();
+                                let sel = selected_sources.get().contains(&src.id);
+                                let id  = src.id.clone();
+                                view! {
+                                    <div
+                                        class=if sel { "source-item selected" } else { "source-item" }
+                                        on:click=move |_| on_toggle.run(id.clone())>
+                                        <span class="source-dot"
+                                              style=format!("background:{}", src.color)/>
+                                        <div>
+                                            <div class="source-name">{src.name.clone()}</div>
+                                            <div class="source-dates">
+                                                {src.earliest.format("%Y").to_string()}
+                                                " – "
+                                                {src.latest.format("%Y").to_string()}
+                                            </div>
+                                        </div>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! {
+                                    <div class="source-group">
+                                        {cluster.into_iter().map(|src| {
+                                            let sel = selected_sources.get().contains(&src.id);
+                                            let id  = src.id.clone();
+                                            let on_toggle = on_toggle.clone();
+                                            view! {
+                                                <div
+                                                    class=if sel { "source-item selected" } else { "source-item" }
+                                                    on:click=move |_| on_toggle.run(id.clone())>
+                                                    <span class="source-dot"
+                                                          style=format!("background:{}", src.color)/>
+                                                    <div>
+                                                        <div class="source-name">{src.name.clone()}</div>
+                                                        <div class="source-dates">
+                                                            {src.earliest.format("%Y").to_string()}
+                                                            " – "
+                                                            {src.latest.format("%Y").to_string()}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            }
+                                        }).collect_view()}
+                                    </div>
+                                }.into_any()
+                            }
+                        }).collect_view()
+                    }}
                 </div>
             </div>
 

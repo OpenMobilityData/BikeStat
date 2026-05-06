@@ -127,6 +127,22 @@ button.active { background: var(--highlight); border-color: var(--highlight); co
 .source-item:hover { background: var(--accent); }
 .source-item.selected { border-color: var(--highlight); background: rgba(233,69,96,0.12); }
 
+.source-group {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+.source-group .source-item {
+    border: none;
+    border-radius: 0;
+}
+.source-group .source-item + .source-item {
+    border-top: 1px solid var(--border);
+}
+.source-group .source-item.selected {
+    border-left: 2px solid var(--highlight);
+}
+
 .source-dot {
     width: 10px;
     height: 10px;

@@ -172,6 +172,7 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
             earliest, latest,
             color: SOURCE_COLORS[acc.color_idx].to_string(),
             loader_type: LoaderType::Discovered,
+            group: Some(make_total_id(&acc.rue1, &acc.rue2)),
         });
         for (ts_unix, total) in chosen {
             records.push(CountRecord {
@@ -237,6 +238,7 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
             earliest, latest,
             color,
             loader_type: LoaderType::Discovered,
+            group: Some(total_id.clone()),
         });
         for (ts_unix, total) in total_buckets {
             records.push(CountRecord {

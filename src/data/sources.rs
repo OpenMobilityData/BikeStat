@@ -141,6 +141,7 @@ fn push_telraam_segment(
                 color: SOURCE_COLORS[(base_color_idx + color_offset) % SOURCE_COLORS.len()]
                     .into(),
                 loader_type: LoaderType::Discovered,
+                group: Some(source_id.to_string()),
             });
         }
     }
@@ -163,5 +164,6 @@ fn push_telraam_segment(
             segment_id: seg.into(),
             file_urls,
         },
+        group: ann.map(|_| source_id.to_string()),
     });
 }

@@ -102,4 +102,8 @@ pub struct DataSource {
     pub latest: DateTime<Utc>,
     pub color: String,
     pub loader_type: LoaderType,
+    /// Shared key for sources that belong to the same physical location group
+    /// (e.g. directionals + total for one intersection).  The sidebar wraps
+    /// consecutive sources with the same non-None group into a visual cluster.
+    pub group: Option<String>,
 }
