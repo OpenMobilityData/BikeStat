@@ -96,6 +96,12 @@ pub enum LoaderType {
     },
     /// Telraam S2 live API (requires an API key configured server-side).
     TelraamApi { segment_id: String },
+    /// Eco-counter Excel exports obtained via access-to-information requests
+    /// to the CDN-NDG borough.  Layout is ad hoc (banner row, blank, header,
+    /// hourly data, "Total" footer).  `file_urls`: paths relative to app root,
+    /// one per quarterly batch, e.g.
+    /// `"data/cdn-ndg/terrebonne-kensington/2025-07-26_2025-11-15.xlsx"`.
+    CdnNdgExcel { file_urls: Vec<String> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

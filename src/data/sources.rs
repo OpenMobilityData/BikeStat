@@ -123,6 +123,81 @@ pub fn telraam_sources() -> Vec<DataSource> {
     out
 }
 
+// ── CDN-NDG access-to-info eco-counter sources ───────────────────────────────
+
+/// Pre-configured CDN-NDG borough eco-counter sources.
+///
+/// These are bike-only counters whose data arrives quarterly via access-to-
+/// information requests.  To integrate a new batch:
+/// 1. Drop the Excel file in `static/data/cdn-ndg/<location>/` using an
+///    ISO date-range filename (e.g. `2025-11-15_2026-02-15.xlsx`).
+/// 2. Add its path to the corresponding `file_urls` list below.
+pub fn cdn_ndg_sources() -> Vec<DataSource> {
+    let mut out = Vec::new();
+
+    push_cdn_ndg_counter(
+        &mut out,
+        "cdnndg-terrebonne-kensington",
+        "CDN-NDG: Terrebonne @ Kensington",
+        LatLon { lat: 45.47022, lon: -73.63204 },
+        Utc.with_ymd_and_hms(2025, 7, 26, 0, 0, 0).unwrap(),
+        vec![
+            "data/cdn-ndg/terrebonne-kensington/2025-07-26_2025-11-15.xlsx".into(),
+        ],
+        11, // base_color_idx; +1 → east, +2 → west.  Telraam used 5 and 8.
+    );
+
+    out
+}
+
+/// Build and push the directional + total entries for a CDN-NDG counter.
+///
+/// The directional sub-sources share the same `group` key as the total source
+/// (which equals the total source's id, by the same convention used elsewhere).
+/// `parse_cdn_ndg_excel` emits records under the `-east` / `-west` id suffixes.
+fn push_cdn_ndg_counter(
+    out: &mut Vec<DataSource>,
+    source_id: &str,
+    display_name: &str,
+    location: LatLon,
+    earliest: DateTime<Utc>,
+    file_urls: Vec<String>,
+    base_color_idx: usize,
+) {
+    let (lat, lon) = (location.lat, location.lon);
+    let mods = || vec![Modality::Bikes];
+
+    // Directionals first so they appear above the total in the sidebar cluster.
+    for (suffix, dir_label, color_offset) in [
+        ("east", "Eastbound", 1usize),
+        ("west", "Westbound", 2usize),
+    ] {
+        out.push(DataSource {
+            id: format!("{}-{}", source_id, suffix),
+            name: format!("{} — ({})", display_name, dir_label),
+            location: LatLon { lat, lon },
+            modalities: mods(),
+            earliest,
+            latest: Utc::now(),
+            color: SOURCE_COLORS[(base_color_idx + color_offset) % SOURCE_COLORS.len()].into(),
+            loader_type: LoaderType::Discovered,
+            group: Some(source_id.to_string()),
+        });
+    }
+
+    out.push(DataSource {
+        id: source_id.into(),
+        name: format!("{} — Total", display_name),
+        location: LatLon { lat, lon },
+        modalities: mods(),
+        earliest,
+        latest: Utc::now(),
+        color: SOURCE_COLORS[base_color_idx % SOURCE_COLORS.len()].into(),
+        loader_type: LoaderType::CdnNdgExcel { file_urls },
+        group: Some(source_id.to_string()),
+    });
+}
+
 /// Build and push a Telraam total source and, when an annotation is registered,
 /// two per-direction sub-sources into `out`.
 fn push_telraam_segment(

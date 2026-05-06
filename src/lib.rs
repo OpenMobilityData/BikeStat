@@ -35,11 +35,15 @@ fn App() -> impl IntoView {
     let (date_from, set_date_from) = signal(format!("{}-01-01", now.year()));
     let (date_to,   set_date_to)   = signal(format!("{}-12-31", now.year()));
 
-    // ── Seed catalogue with pre-configured Telraam sources immediately ──
+    // ── Seed catalogue with pre-configured sources immediately ──
     // Their records load asynchronously below; the entries appear in the
     // sidebar right away so the user can see what is expected.
     let telraam = sources::telraam_sources();
-    set_sources.update(|s| s.extend(telraam.clone()));
+    let cdn_ndg = sources::cdn_ndg_sources();
+    set_sources.update(|s| {
+        s.extend(telraam.clone());
+        s.extend(cdn_ndg.clone());
+    });
 
     // ── Fetch Montreal data ──
     {
@@ -77,6 +81,34 @@ fn App() -> impl IntoView {
                     let msg = format!("⏳ Loading {}…", src_name);
                     add_msg(&set_load_msgs, &msg);
                     match loader::fetch_telraam_excel(&src_id, &url).await {
+                        Ok(new_recs) => {
+                            update_date_range(&new_recs, view_mode, date_from, date_to, set_date_from, set_date_to);
+                            set_records.update(|r| r.extend(new_recs));
+                            remove_msg(&set_load_msgs, &msg);
+                        }
+                        Err(e) => {
+                            replace_msg(&set_load_msgs, &msg,
+                                &format!("⚠ {}: {}", src_name, e));
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    // ── Fetch each CDN-NDG Excel file ──
+    for src in &cdn_ndg {
+        if let LoaderType::CdnNdgExcel { file_urls } = &src.loader_type {
+            for url in file_urls {
+                let src_id    = src.id.clone();
+                let url       = url.clone();
+                let src_name  = src.name.clone();
+                let set_records   = set_records.clone();
+                let set_load_msgs = set_load_msgs.clone();
+                spawn_local(async move {
+                    let msg = format!("⏳ Loading {}…", src_name);
+                    add_msg(&set_load_msgs, &msg);
+                    match loader::fetch_cdn_ndg_excel(&src_id, &url).await {
                         Ok(new_recs) => {
                             update_date_range(&new_recs, view_mode, date_from, date_to, set_date_from, set_date_to);
                             set_records.update(|r| r.extend(new_recs));

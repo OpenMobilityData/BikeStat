@@ -415,6 +415,129 @@ pub async fn fetch_telraam_excel(source_id: &str, url: &str) -> Result<Vec<Count
     Ok(parse_telraam_excel(source_id, &bytes))
 }
 
+/// Parse a CDN-NDG access-to-information eco-counter Excel export.
+///
+/// Layout (ad hoc, set by the borough):
+///   Row 1 — period banner ("Période ... → ...")
+///   Row 2 — blank
+///   Row 3 — column headers: A=Time, B=total cyclists, C=eastbound (IN_est),
+///           D=westbound (OUT_ouest), E=motor vehicles, F=grand total
+///   Rows 4..N — hourly data; Time is an Excel datetime cell in Montreal
+///           local time (DST-aware UTC conversion via chrono-tz).
+///   Row N+1 — "Total" footer (skipped because the time cell is a string).
+///
+/// Emits records under the source's id (totals) and `<id>-east` / `<id>-west`
+/// (directionals).  Bike-only — the motor-vehicle column is intentionally
+/// ignored even though the file carries it.
+pub fn parse_cdn_ndg_excel(source_id: &str, bytes: &[u8]) -> Vec<CountRecord> {
+    use calamine::{open_workbook_from_rs, Data, Reader, Xlsx};
+
+    let cursor = Cursor::new(bytes.to_vec());
+    let mut wb: Xlsx<_> = match open_workbook_from_rs(cursor) {
+        Ok(w) => w,
+        Err(e) => {
+            web_sys::console::error_1(&format!("CDN-NDG Excel open failed: {:?}", e).into());
+            return vec![];
+        }
+    };
+
+    let sheet_names = wb.sheet_names().to_vec();
+    let Some(sheet) = sheet_names.first().cloned() else { return vec![] };
+    let range = match wb.worksheet_range(&sheet) {
+        Ok(r) => r,
+        Err(e) => {
+            web_sys::console::error_1(&format!("CDN-NDG sheet read failed: {:?}", e).into());
+            return vec![];
+        }
+    };
+
+    fn cell_str(c: &Data) -> Option<&str> {
+        match c {
+            Data::String(s) => Some(s.trim()),
+            _ => None,
+        }
+    }
+    fn cell_f64(c: &Data) -> f64 {
+        match c {
+            Data::Float(f) => *f,
+            Data::Int(i)   => *i as f64,
+            Data::Bool(b)  => if *b { 1.0 } else { 0.0 },
+            _ => 0.0,
+        }
+    }
+    fn extract_dt(c: &Data) -> Option<chrono::NaiveDateTime> {
+        match c {
+            Data::DateTime(edt) => edt.as_datetime(),
+            Data::DateTimeIso(s) => chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok()
+                .or_else(|| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").ok()),
+            Data::String(s) => chrono::NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%d %H:%M:%S").ok()
+                .or_else(|| chrono::NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%d %H:%M").ok()),
+            _ => None,
+        }
+    }
+    fn val_at(row: &[Data], col: Option<usize>) -> f64 {
+        col.and_then(|c| row.get(c)).map(cell_f64).unwrap_or(0.0)
+    }
+
+    let mut rows_iter = range.rows();
+    // Banner + blank.
+    let _ = rows_iter.next();
+    let _ = rows_iter.next();
+    let Some(header) = rows_iter.next() else { return vec![] };
+
+    let find = |name: &str| -> Option<usize> {
+        header.iter().position(|c| {
+            cell_str(c).map_or(false, |s| s.eq_ignore_ascii_case(name))
+        })
+    };
+
+    let dt_col         = find("time").unwrap_or(0);
+    let bike_total_col = find("rue terrebonne cyclist");
+    let bike_east_col  = find("rue terrebonne cyclist in_est");
+    let bike_west_col  = find("rue terrebonne cyclist out_ouest");
+
+    let east_id = format!("{}-east", source_id);
+    let west_id = format!("{}-west", source_id);
+
+    let mut records = Vec::new();
+    for row in rows_iter {
+        let Some(ndt) = row.get(dt_col).and_then(extract_dt) else { continue };
+        let ts = match MontrealTz.from_local_datetime(&ndt) {
+            LocalResult::Single(dt)       => dt.with_timezone(&Utc),
+            LocalResult::Ambiguous(dt, _) => dt.with_timezone(&Utc),
+            LocalResult::None             => continue,
+        };
+
+        records.push(CountRecord {
+            timestamp: ts, modality: Modality::Bikes,
+            count: val_at(row, bike_total_col),
+            source_id: source_id.to_string(),
+        });
+        records.push(CountRecord {
+            timestamp: ts, modality: Modality::Bikes,
+            count: val_at(row, bike_east_col),
+            source_id: east_id.clone(),
+        });
+        records.push(CountRecord {
+            timestamp: ts, modality: Modality::Bikes,
+            count: val_at(row, bike_west_col),
+            source_id: west_id.clone(),
+        });
+    }
+
+    records
+}
+
+/// Fetch a CDN-NDG Excel file from a URL and parse it.
+pub async fn fetch_cdn_ndg_excel(source_id: &str, url: &str) -> Result<Vec<CountRecord>, String> {
+    let resp = gloo_net::http::Request::get(url)
+        .send().await
+        .map_err(|e| format!("Fetch error: {:?}", e))?;
+    if !resp.ok() { return Err(format!("HTTP {}", resp.status())); }
+    let bytes = resp.binary().await.map_err(|e| format!("Binary error: {:?}", e))?;
+    Ok(parse_cdn_ndg_excel(source_id, &bytes))
+}
+
 // ── Aggregation ──────────────────────────────────────────────────────────────
 
 pub fn aggregate(
