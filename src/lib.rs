@@ -377,6 +377,45 @@ fn App() -> impl IntoView {
         format!("{}: {}", lang.get().t().vdm_data_prefix, display)
     };
 
+    // Telraam freshness, derived from the records signal. For each Telraam
+    // segment in the catalogue, find the latest record (across Total +
+    // directional variants); the *oldest* of those is the most pessimistic
+    // freshness number — surfaces a stalled sensor while still moving when
+    // every sensor is current. The hover title carries a per-segment
+    // breakdown so users can see exactly which one is lagging.
+    let telraam_freshness = move || -> Option<(String, String)> {
+        let recs = records.get();
+        let srcs = app_sources.get();
+        let segs: Vec<(String, String)> = srcs.iter()
+            .filter(|s| matches!(s.loader_type, LoaderType::TelraamExcel { .. }))
+            .map(|s| (s.id.clone(), s.name.clone()))
+            .collect();
+        if segs.is_empty() { return None; }
+
+        let mut per_seg: Vec<(DateTime<Utc>, String)> = Vec::new();
+        for (id, name) in &segs {
+            let prefix = format!("{}-", id);
+            let max_ts = recs.iter()
+                .filter(|r| r.source_id == *id || r.source_id.starts_with(&prefix))
+                .map(|r| r.timestamp)
+                .max();
+            if let Some(t) = max_ts { per_seg.push((t, name.clone())); }
+        }
+        if per_seg.is_empty() { return None; }
+
+        let oldest = per_seg.iter().map(|(t, _)| *t).min()?;
+        let header = oldest.with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M %:z").to_string();
+        let mut tooltip_lines: Vec<(DateTime<Utc>, String)> = per_seg;
+        tooltip_lines.sort_by_key(|(t, _)| *t);
+        let tooltip = tooltip_lines.iter()
+            .map(|(t, n)| format!("{}: {}",
+                n,
+                t.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M")))
+            .collect::<Vec<_>>().join("\n");
+        Some((header, tooltip))
+    };
+
     view! {
         <div id="app" class:sidebar-open=move || sidebar_open.get()>
             <header>
@@ -391,6 +430,13 @@ fn App() -> impl IntoView {
                 <span class="subtitle">{move || lang.get().t().subtitle}</span>
                 <span class="load-status">{status_text}</span>
                 <span class="data-status">{localized_status}</span>
+                <span class="data-status">
+                    {move || telraam_freshness().map(|(text, tooltip)| view! {
+                        <span title=tooltip>
+                            {format!("{}: {}", lang.get().t().telraam_data_prefix, text)}
+                        </span>
+                    })}
+                </span>
                 <button class="lang-toggle"
                         title="Language / Langue"
                         on:click=move |_| set_lang.update(|l| *l = l.other())>

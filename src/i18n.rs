@@ -60,6 +60,7 @@ pub struct T {
     pub mobile_filters: &'static str,
     pub mobile_close: &'static str,
     pub vdm_data_prefix: &'static str,
+    pub telraam_data_prefix: &'static str,
 
     // Sidebar
     pub locations: &'static str,
@@ -102,6 +103,7 @@ pub const EN: T = T {
     mobile_filters: "Filters",
     mobile_close: "Close",
     vdm_data_prefix: "VdM data",
+    telraam_data_prefix: "Telraam data",
 
     locations: "Locations",
     modalities: "Modalities",
@@ -139,6 +141,7 @@ pub const FR: T = T {
     mobile_filters: "Filtres",
     mobile_close: "Fermer",
     vdm_data_prefix: "Données VdM",
+    telraam_data_prefix: "Données Telraam",
 
     locations: "Emplacements",
     modalities: "Modalités",
