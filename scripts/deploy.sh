@@ -10,6 +10,10 @@ DEST="${BIKESTAT_DEST:-/var/www/bikestat/}"
 
 cd "$(dirname "$0")/.."
 
+# Make sure cargo / trunk are on PATH when invoked from a non-login shell.
+# shellcheck disable=SC1091
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+
 trunk build --release
 
 rsync -av --delete \
