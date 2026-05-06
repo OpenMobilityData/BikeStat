@@ -18,9 +18,8 @@ pub fn Sidebar(
     on_date_from: Callback<String>,
     on_date_to: Callback<String>,
 
-    on_preset: Callback<&'static str>,
-    season_presets: ReadSignal<Vec<(String, String, String)>>,
-    on_season: Callback<(String, String)>,
+    date_presets: ReadSignal<Vec<(String, String, String)>>,
+    on_date_preset: Callback<(String, String)>,
 ) -> impl IntoView {
     view! {
         <aside>
@@ -137,14 +136,10 @@ pub fn Sidebar(
             <div class="control-group">
                 <label class="section-label">"Presets"</label>
                 <div class="btn-group">
-                    <button on:click={
-                        let on_preset = on_preset.clone();
-                        move |_| on_preset.run("all")
-                    }>"All dates"</button>
-                    {move || season_presets.get().into_iter().map(|(label, from, to)| {
-                        let on_season = on_season.clone();
+                    {move || date_presets.get().into_iter().map(|(label, from, to)| {
+                        let on_date_preset = on_date_preset.clone();
                         view! {
-                            <button on:click=move |_| on_season.run((from.clone(), to.clone()))>
+                            <button on:click=move |_| on_date_preset.run((from.clone(), to.clone()))>
                                 {label}
                             </button>
                         }

@@ -1,7 +1,7 @@
 mod data;
 mod components;
 
-use chrono::{Datelike, NaiveDate, TimeZone, Utc};
+use chrono::{Datelike, Duration, Months, NaiveDate, TimeZone, Utc};
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -107,36 +107,26 @@ fn App() -> impl IntoView {
         });
     });
 
-    // "All dates" resets the view to the full extent of whatever is loaded.
-    let on_preset = Callback::new(move |_: &'static str| {
-        let recs = records.get_untracked();
-        if let (Some(first), Some(last)) = (
-            recs.iter().map(|r| r.timestamp).min(),
-            recs.iter().map(|r| r.timestamp).max(),
-        ) {
-            set_date_from.set(first.format("%Y-%m-%d").to_string());
-            set_date_to.set(last.format("%Y-%m-%d").to_string());
-        }
-    });
-
-    // Season preset buttons: derived reactively from the loaded records.
-    let (season_presets, set_season_presets) =
+    // Date preset buttons: derived reactively from the loaded records.
+    // Includes "All dates", relative ranges (Last Week … Last 6 Months),
+    // calendar years, and seasonal Summer/Winter ranges that overlap the data.
+    let (date_presets, set_date_presets) =
         signal::<Vec<(String, String, String)>>(vec![]);
     Effect::new(move |_| {
         let recs = records.get();
         let first = recs.iter().map(|r| r.timestamp).min();
         let last  = recs.iter().map(|r| r.timestamp).max();
         let presets = match (first, last) {
-            (Some(f), Some(l)) => compute_season_presets(
+            (Some(f), Some(l)) => compute_date_presets(
                 &f.format("%Y-%m-%d").to_string(),
                 &l.format("%Y-%m-%d").to_string(),
             ),
             _ => vec![],
         };
-        set_season_presets.set(presets);
+        set_date_presets.set(presets);
     });
 
-    let on_season = Callback::new(move |(from, to): (String, String)| {
+    let on_date_preset = Callback::new(move |(from, to): (String, String)| {
         set_date_from.set(from);
         set_date_to.set(to);
     });
@@ -215,9 +205,8 @@ fn App() -> impl IntoView {
                 on_date_from=Callback::new(move |s| set_date_from.set(s))
                 on_date_to=Callback::new(move |s| set_date_to.set(s))
 
-                on_preset=on_preset
-                season_presets=season_presets
-                on_season=on_season
+                date_presets=date_presets
+                on_date_preset=on_date_preset
             />
 
             <main>
@@ -279,43 +268,88 @@ fn replace_msg(signal: &WriteSignal<Vec<String>>, old: &str, new: &str) {
     });
 }
 
-/// Composite series color: modality sets the hue, source index sets lightness.
+/// Build the list of `(label, from, to)` preset ranges for the data window
+/// [from_str, to_str]. Each preset is only emitted when it overlaps the
+/// available data, so users only see buttons that will actually do something.
 ///
-/// Use case 1 (same modality, different locations): same hue, lightness varies.
-/// Use case 2 (same location, different modalities): hues are distinct.
-/// Return one `(label, from, to)` entry per summer and winter season that
-/// overlaps with the data window [from_str, to_str].
-///
-/// Season boundaries follow Montréal's seasonal bike-lane calendar:
-///   Summer — Apr 1 → Nov 15  (label "Summer YYYY")
-///   Winter — Nov 16 → Mar 31 the following year  (label "Winter YYYY/YYYY+1")
-fn compute_season_presets(from_str: &str, to_str: &str) -> Vec<(String, String, String)> {
+/// Order:
+///   1. "All dates" — the full data extent.
+///   2. Relative — Last Week / Month / 3 Months / 6 Months, anchored at the
+///      latest record. Skipped if the resulting start would precede the data.
+///   3. Calendar years — one per year touched by the data window
+///      (nominal Jan 1 → Dec 31; chart filtering handles partial coverage).
+///   4. Seasonal — Summer (Apr 1 → Nov 15) and Winter (Nov 16 → Mar 31 of
+///      the following year) entries that overlap the data, sorted by start.
+fn compute_date_presets(from_str: &str, to_str: &str) -> Vec<(String, String, String)> {
     let Ok(data_from) = NaiveDate::parse_from_str(from_str, "%Y-%m-%d") else { return vec![] };
     let Ok(data_to)   = NaiveDate::parse_from_str(to_str,   "%Y-%m-%d") else { return vec![] };
 
     let mut out = Vec::new();
-    // Scan years generously so we catch winters that straddle year boundaries.
+    let to_iso = data_to.format("%Y-%m-%d").to_string();
+
+    // ── All dates ──
+    out.push((
+        "All dates".to_string(),
+        data_from.format("%Y-%m-%d").to_string(),
+        to_iso.clone(),
+    ));
+
+    // ── Relative presets, anchored at the latest record ──
+    let relatives: [(&str, Option<NaiveDate>); 4] = [
+        ("Last Week",     Some(data_to - Duration::days(7))),
+        ("Last Month",    data_to.checked_sub_months(Months::new(1))),
+        ("Last 3 Months", data_to.checked_sub_months(Months::new(3))),
+        ("Last 6 Months", data_to.checked_sub_months(Months::new(6))),
+    ];
+    for (label, from_opt) in relatives {
+        if let Some(from_dt) = from_opt {
+            if from_dt >= data_from {
+                out.push((
+                    label.to_string(),
+                    from_dt.format("%Y-%m-%d").to_string(),
+                    to_iso.clone(),
+                ));
+            }
+        }
+    }
+
+    // ── Calendar year presets ──
+    for y in data_from.year()..=data_to.year() {
+        if let (Some(y_start), Some(y_end)) = (
+            NaiveDate::from_ymd_opt(y, 1, 1),
+            NaiveDate::from_ymd_opt(y, 12, 31),
+        ) {
+            if y_end >= data_from && y_start <= data_to {
+                out.push((
+                    y.to_string(),
+                    y_start.format("%Y-%m-%d").to_string(),
+                    y_end.format("%Y-%m-%d").to_string(),
+                ));
+            }
+        }
+    }
+
+    // ── Seasonal presets ──
+    let mut seasons = Vec::new();
     for y in (data_from.year() - 1)..=(data_to.year() + 1) {
-        // Summer
         if let (Some(sf), Some(st)) = (
             NaiveDate::from_ymd_opt(y, 4,  1),
             NaiveDate::from_ymd_opt(y, 11, 15),
         ) {
             if st >= data_from && sf <= data_to {
-                out.push((
+                seasons.push((
                     format!("Summer {}", y),
                     sf.format("%Y-%m-%d").to_string(),
                     st.format("%Y-%m-%d").to_string(),
                 ));
             }
         }
-        // Winter (Nov 16 of y → Mar 31 of y+1)
         if let (Some(wf), Some(wt)) = (
             NaiveDate::from_ymd_opt(y,     11, 16),
             NaiveDate::from_ymd_opt(y + 1, 3,  31),
         ) {
             if wt >= data_from && wf <= data_to {
-                out.push((
+                seasons.push((
                     format!("Winter {}/{}", y, y + 1),
                     wf.format("%Y-%m-%d").to_string(),
                     wt.format("%Y-%m-%d").to_string(),
@@ -323,10 +357,16 @@ fn compute_season_presets(from_str: &str, to_str: &str) -> Vec<(String, String, 
             }
         }
     }
-    out.sort_by(|a, b| a.1.cmp(&b.1));
+    seasons.sort_by(|a, b| a.1.cmp(&b.1));
+    out.extend(seasons);
+
     out
 }
 
+/// Composite series color: modality sets the hue, source index sets lightness.
+///
+/// Use case 1 (same modality, different locations): same hue, lightness varies.
+/// Use case 2 (same location, different modalities): hues are distinct.
 fn series_color(modality: Modality, source_idx: usize) -> String {
     let (hue, sat) = match modality {
         Modality::Bikes       => (350.0_f64, 0.80),
