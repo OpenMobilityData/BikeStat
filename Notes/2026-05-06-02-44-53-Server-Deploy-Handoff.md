@@ -116,7 +116,8 @@ ls dist/                  # bikestat-*.wasm  bikestat-*.js  data/  index.html  .
 
 Note: `dist/data/cyclistes.csv` will be present locally (we keep a dev copy
 in `static/data/` that Trunk's `copy-dir` propagates). It's gitignored. The
-cron will overwrite it on the server, so the bootstrap copy is fine.
+deploy wrapper (see §6) excludes it from rsync so the cron-managed file on
+the server is never overwritten by the bootstrap.
 
 ---
 
@@ -131,8 +132,14 @@ sudo chown $USER:$USER /var/www/bikestat
 From the Mac:
 ```bash
 cd ~/Desktop/BikeStat
-rsync -av --delete dist/ rhoge@<server-ip-or-hostname>:/var/www/bikestat/
+./scripts/deploy.sh
 ```
+
+`scripts/deploy.sh` runs `trunk build --release` followed by an rsync that
+excludes `data/cyclistes.csv` and `data/status.txt`, so the cron-managed
+files on the server are never overwritten by the local bootstrap. The
+remote host and destination path can be overridden via the `BIKESTAT_REMOTE`
+and `BIKESTAT_DEST` env vars.
 
 Verify on the server:
 ```bash
@@ -407,17 +414,17 @@ On the **Mac**:
 ```bash
 cd ~/Desktop/BikeStat
 git pull
-trunk build --release
-rsync -av --delete dist/ rhoge@bikestat.org:/var/www/bikestat/
+./scripts/deploy.sh
 ```
 
 The fingerprinted asset filenames mean clients pick up the new bundle
 automatically as soon as `index.html` references them. No lighttpd reload.
 
-If `--delete` wipes the cron-managed `cyclistes.csv` and `status.txt`, the
-next cron tick (within an hour) restores them. If you want them back
-immediately, run the bootstrap one-shot from §9 again. Or `--exclude` them
-in the rsync.
+`scripts/deploy.sh` already excludes `data/cyclistes.csv` and
+`data/status.txt` from the rsync, so the cron-managed files on the server
+survive the deploy. (If you ever rsync without those excludes, the
+bootstrap CSV briefly replaces the cron-managed one until the next `:07`
+tick — restore immediately by running the bootstrap one-shot from §9.)
 
 For Telraam / CDN-NDG xlsx — those live under `static/data/` and ship in
 `dist/` via Trunk's `copy-dir`. Commit, push, pull, rebuild, rsync.

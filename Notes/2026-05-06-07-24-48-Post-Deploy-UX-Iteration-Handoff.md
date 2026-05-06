@@ -59,10 +59,14 @@ cd ~/Desktop/BikeStat
 git add -A
 git commit -m "<message>"
 git push
-trunk build --release
-rsync -av --delete dist/ rhoge@bikestat.org:/var/www/bikestat/
+./scripts/deploy.sh
 ssh rhoge@bikestat.org 'cd ~/GitHub/BikeStat && git pull'
 ```
+
+`scripts/deploy.sh` runs `trunk build --release` then `rsync -av --delete`
+with `--exclude=data/cyclistes.csv --exclude=data/status.txt` so the
+cron-managed files on the server are never clobbered by the local
+bootstrap copy in `dist/`.
 
 The server `git pull` keeps the cron script (`scripts/refresh-vdm.sh`) in
 sync; if a change doesn't touch that file, the `git pull` step is
@@ -295,11 +299,13 @@ In approximate priority order:
 
 - `dist/data/cyclistes.csv` and `dist/data/status.txt` are gitignored
   but Trunk's `copy-dir` on `static/data/` does include them in
-  `dist/`. After `rsync --delete`, the bootstrap CSV (built locally)
-  briefly replaces the cron-managed one on the server until the next
-  cron tick (≤ 1 hour) refreshes it. To restore immediately, SSH and
-  run `~/GitHub/BikeStat/scripts/refresh-vdm.sh` with
-  `BIKESTAT_DATA_DIR=/var/www/bikestat/data`.
+  `dist/`. The deploy wrapper at `scripts/deploy.sh` excludes both
+  paths from the rsync so the cron-managed files on the server are
+  never overwritten by the local bootstrap. If you ever rsync
+  manually without those excludes, the bootstrap briefly replaces the
+  cron-managed CSV until the next `:07` cron tick — restore
+  immediately by SSH'ing and running
+  `BIKESTAT_DATA_DIR=/var/www/bikestat/data ~/GitHub/BikeStat/scripts/refresh-vdm.sh`.
 - Browsers cache favicons aggressively. After changing `static/favicon.svg`,
   expect users to need a hard reload (Cmd-Shift-R) or new tab to see
   the new icon. Trunk fingerprints the filename, which usually
