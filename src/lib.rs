@@ -169,7 +169,7 @@ fn App() -> impl IntoView {
     // Includes "All dates", relative ranges (Last Week … Last 6 Months),
     // calendar years, and seasonal Summer/Winter ranges that overlap the data.
     let (date_presets, set_date_presets) =
-        signal::<Vec<(String, String, String)>>(vec![]);
+        signal::<Vec<(String, String, String, i64)>>(vec![]);
     Effect::new(move |_| {
         let recs = records.get();
         let first = recs.iter().map(|r| r.timestamp).min();
@@ -415,9 +415,12 @@ fn replace_msg(signal: &WriteSignal<Vec<String>>, old: &str, new: &str) {
     });
 }
 
-/// Build the list of `(label, from, to)` preset ranges for the data window
-/// [from_str, to_str]. Each preset is only emitted when it overlaps the
-/// available data, so users only see buttons that will actually do something.
+/// Build the list of `(label, from, to, days)` preset ranges for the data
+/// window [from_str, to_str]. The 4th tuple field is the duration in days,
+/// which the sidebar uses to disable presets that are too short to produce
+/// a non-empty chart at the current resolution (e.g. "Last Week" + Month).
+/// Each preset is only emitted when it overlaps the available data, so
+/// users only see buttons that will actually do something.
 ///
 /// Order:
 ///   1. "All dates" — the full data extent.
@@ -427,19 +430,21 @@ fn replace_msg(signal: &WriteSignal<Vec<String>>, old: &str, new: &str) {
 ///      (nominal Jan 1 → Dec 31; chart filtering handles partial coverage).
 ///   4. Seasonal — Summer (Apr 1 → Nov 15) and Winter (Nov 16 → Mar 31 of
 ///      the following year) entries that overlap the data, sorted by start.
-fn compute_date_presets(from_str: &str, to_str: &str) -> Vec<(String, String, String)> {
+fn compute_date_presets(from_str: &str, to_str: &str) -> Vec<(String, String, String, i64)> {
     let Ok(data_from) = NaiveDate::parse_from_str(from_str, "%Y-%m-%d") else { return vec![] };
     let Ok(data_to)   = NaiveDate::parse_from_str(to_str,   "%Y-%m-%d") else { return vec![] };
 
+    let entry = |label: &str, f: NaiveDate, t: NaiveDate| {
+        (label.to_string(),
+         f.format("%Y-%m-%d").to_string(),
+         t.format("%Y-%m-%d").to_string(),
+         (t - f).num_days())
+    };
+
     let mut out = Vec::new();
-    let to_iso = data_to.format("%Y-%m-%d").to_string();
 
     // ── All dates ──
-    out.push((
-        "All dates".to_string(),
-        data_from.format("%Y-%m-%d").to_string(),
-        to_iso.clone(),
-    ));
+    out.push(entry("All dates", data_from, data_to));
 
     // ── Relative presets, anchored at the latest record ──
     let relatives: [(&str, Option<NaiveDate>); 4] = [
@@ -451,11 +456,7 @@ fn compute_date_presets(from_str: &str, to_str: &str) -> Vec<(String, String, St
     for (label, from_opt) in relatives {
         if let Some(from_dt) = from_opt {
             if from_dt >= data_from {
-                out.push((
-                    label.to_string(),
-                    from_dt.format("%Y-%m-%d").to_string(),
-                    to_iso.clone(),
-                ));
+                out.push(entry(label, from_dt, data_to));
             }
         }
     }
@@ -467,11 +468,7 @@ fn compute_date_presets(from_str: &str, to_str: &str) -> Vec<(String, String, St
             NaiveDate::from_ymd_opt(y, 12, 31),
         ) {
             if y_end >= data_from && y_start <= data_to {
-                out.push((
-                    y.to_string(),
-                    y_start.format("%Y-%m-%d").to_string(),
-                    y_end.format("%Y-%m-%d").to_string(),
-                ));
+                out.push(entry(&y.to_string(), y_start, y_end));
             }
         }
     }
@@ -484,11 +481,7 @@ fn compute_date_presets(from_str: &str, to_str: &str) -> Vec<(String, String, St
             NaiveDate::from_ymd_opt(y, 11, 15),
         ) {
             if st >= data_from && sf <= data_to {
-                seasons.push((
-                    format!("Summer {}", y),
-                    sf.format("%Y-%m-%d").to_string(),
-                    st.format("%Y-%m-%d").to_string(),
-                ));
+                seasons.push(entry(&format!("Summer {}", y), sf, st));
             }
         }
         if let (Some(wf), Some(wt)) = (
@@ -496,11 +489,7 @@ fn compute_date_presets(from_str: &str, to_str: &str) -> Vec<(String, String, St
             NaiveDate::from_ymd_opt(y + 1, 3,  31),
         ) {
             if wt >= data_from && wf <= data_to {
-                seasons.push((
-                    format!("Winter {}/{}", y, y + 1),
-                    wf.format("%Y-%m-%d").to_string(),
-                    wt.format("%Y-%m-%d").to_string(),
-                ));
+                seasons.push(entry(&format!("Winter {}/{}", y, y + 1), wf, wt));
             }
         }
     }

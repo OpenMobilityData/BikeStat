@@ -18,7 +18,7 @@ pub fn Sidebar(
     on_date_from: Callback<String>,
     on_date_to: Callback<String>,
 
-    date_presets: ReadSignal<Vec<(String, String, String)>>,
+    date_presets: ReadSignal<Vec<(String, String, String, i64)>>,
     on_date_preset: Callback<(String, String)>,
 
     view_mode: ReadSignal<ViewMode>,
@@ -137,16 +137,37 @@ pub fn Sidebar(
 
             // ── Time Window ──
             <div class="control-group">
-                <label class="section-label">"Presets"</label>
+                <label class="section-label">"Date range"</label>
                 <div class="btn-group">
-                    {move || date_presets.get().into_iter().map(|(label, from, to)| {
-                        let on_date_preset = on_date_preset.clone();
-                        view! {
-                            <button on:click=move |_| on_date_preset.run((from.clone(), to.clone()))>
-                                {label}
-                            </button>
-                        }
-                    }).collect_view()}
+                    {move || {
+                        // A preset is disabled if its day-span is shorter than
+                        // what the current resolution can summarize without
+                        // ending up with all-partial buckets that get trimmed.
+                        let res = resolution.get();
+                        let min_days: i64 = match res {
+                            Resolution::Hour | Resolution::Day => 0,
+                            Resolution::Week  => 14,
+                            Resolution::Month => 60,
+                        };
+                        let res_label = res.label().to_lowercase();
+                        date_presets.get().into_iter().map(|(label, from, to, days)| {
+                            let on_date_preset = on_date_preset.clone();
+                            let disabled = days < min_days;
+                            let title = if disabled {
+                                format!("Range is too short to show a full {}", res_label)
+                            } else {
+                                String::new()
+                            };
+                            view! {
+                                <button
+                                    disabled=disabled
+                                    title=title
+                                    on:click=move |_| on_date_preset.run((from.clone(), to.clone()))>
+                                    {label}
+                                </button>
+                            }
+                        }).collect_view()
+                    }}
                     <button
                         class=move || if view_mode.get() == ViewMode::YearOnYear { "active" } else { "" }
                         on:click=move |_| on_year_on_year.run(())>

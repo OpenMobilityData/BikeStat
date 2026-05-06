@@ -114,6 +114,11 @@ button {
 
 button:hover { background: #1a4a8a; border-color: #4a6fa0; }
 button.active { background: var(--highlight); border-color: var(--highlight); color: #fff; }
+button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+button:disabled:hover { background: var(--accent); border-color: var(--border); }
 
 .source-list {
     display: flex;
