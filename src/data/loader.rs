@@ -508,14 +508,24 @@ pub fn parse_telraam_api(source_id: &str, json_bytes: &[u8]) -> Vec<CountRecord>
 /// Fetch a cron-written Telraam API JSON snapshot and parse it. A 404 is
 /// treated as "cron hasn't produced one yet" and returns an empty record
 /// set (no error), so the page still works on first deploy or in dev.
-pub async fn fetch_telraam_api(source_id: &str, url: &str) -> Result<Vec<CountRecord>, String> {
+///
+/// Also returns the response's `Last-Modified` time when available, so the
+/// caller can display when cron last refreshed the snapshot — this is the
+/// "last successful API call" signal, independent of whether the sensor
+/// itself produced any new rows.
+pub async fn fetch_telraam_api(source_id: &str, url: &str)
+    -> Result<(Vec<CountRecord>, Option<DateTime<Utc>>), String>
+{
     let resp = gloo_net::http::Request::get(url)
         .send().await
         .map_err(|e| format!("Fetch error: {:?}", e))?;
-    if resp.status() == 404 { return Ok(vec![]); }
+    if resp.status() == 404 { return Ok((vec![], None)); }
     if !resp.ok() { return Err(format!("HTTP {}", resp.status())); }
+    let last_modified = resp.headers().get("last-modified")
+        .and_then(|s| DateTime::parse_from_rfc2822(&s).ok())
+        .map(|dt| dt.with_timezone(&Utc));
     let bytes = resp.binary().await.map_err(|e| format!("Binary error: {:?}", e))?;
-    Ok(parse_telraam_api(source_id, &bytes))
+    Ok((parse_telraam_api(source_id, &bytes), last_modified))
 }
 
 /// Parse a CDN-NDG access-to-information eco-counter Excel export.

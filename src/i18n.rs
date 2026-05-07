@@ -61,6 +61,10 @@ pub struct T {
     pub mobile_close: &'static str,
     pub vdm_data_prefix: &'static str,
     pub telraam_data_prefix: &'static str,
+    pub last_api_fetch: &'static str,
+    pub last_record:    &'static str,
+    pub last_bike:      &'static str,
+    pub value_unavailable: &'static str,
 
     // Sidebar
     pub locations: &'static str,
@@ -105,7 +109,11 @@ pub const EN: T = T {
     mobile_filters: "Filters",
     mobile_close: "Close",
     vdm_data_prefix: "VdM data",
-    telraam_data_prefix: "Telraam data",
+    telraam_data_prefix: "Telraam",
+    last_api_fetch: "Last API call",
+    last_record:    "Last record received",
+    last_bike:      "Last hour with bikes",
+    value_unavailable: "—",
 
     locations: "Locations",
     modalities: "Modalities",
@@ -145,7 +153,11 @@ pub const FR: T = T {
     mobile_filters: "Filtres",
     mobile_close: "Fermer",
     vdm_data_prefix: "Données VdM",
-    telraam_data_prefix: "Données Telraam",
+    telraam_data_prefix: "Telraam",
+    last_api_fetch: "Dernier appel API",
+    last_record:    "Dernier relevé reçu",
+    last_bike:      "Dernière heure avec vélos",
+    value_unavailable: "—",
 
     locations: "Emplacements",
     modalities: "Modalités",

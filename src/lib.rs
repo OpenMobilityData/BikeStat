@@ -27,6 +27,13 @@ fn App() -> impl IntoView {
     let (app_sources, set_sources) = signal::<Vec<DataSource>>(vec![]);
     let (records,     set_records) = signal::<Vec<CountRecord>>(vec![]);
     let (load_msgs,   set_load_msgs) = signal::<Vec<String>>(vec![]);
+    // Per-segment last successful Telraam API refresh (api.json mtime,
+    // captured from the `Last-Modified` response header on each fetch).
+    // Distinct from the latest record timestamp — the cron may have run
+    // moments ago even though the underlying sensor stopped reporting days
+    // ago. Keyed by Telraam source id ("telraam-9794" etc.).
+    let (telraam_api_fetched, set_telraam_api_fetched) =
+        signal::<BTreeMap<String, DateTime<Utc>>>(BTreeMap::new());
 
     let (selected_srcs, set_selected_srcs) = signal::<Vec<String>>(vec![]);
     let (selected_mods, set_selected_mods) = signal::<Vec<Modality>>(vec![Modality::Bikes]);
@@ -143,13 +150,18 @@ fn App() -> impl IntoView {
             let src_name  = src.name.clone();
             let set_records   = set_records.clone();
             let set_load_msgs = set_load_msgs.clone();
+            let set_telraam_api_fetched = set_telraam_api_fetched.clone();
             spawn_local(async move {
                 match loader::fetch_telraam_api(&src_id, &url).await {
-                    Ok(new_recs) if !new_recs.is_empty() => {
-                        update_date_range(&new_recs, view_mode, date_from, date_to, set_date_from, set_date_to);
-                        set_records.update(|r| dedup_extend(r, new_recs));
+                    Ok((new_recs, last_mod)) => {
+                        if let Some(t) = last_mod {
+                            set_telraam_api_fetched.update(|m| { m.insert(src_id.clone(), t); });
+                        }
+                        if !new_recs.is_empty() {
+                            update_date_range(&new_recs, view_mode, date_from, date_to, set_date_from, set_date_to);
+                            set_records.update(|r| dedup_extend(r, new_recs));
+                        }
                     }
-                    Ok(_) => {}
                     Err(e) => {
                         let msg = format!("⚠ {} (API): {}", src_name, e);
                         add_msg(&set_load_msgs, &msg);
@@ -450,43 +462,52 @@ fn App() -> impl IntoView {
         format!("{}: {}", lang.get().t().vdm_data_prefix, display)
     };
 
-    // Telraam freshness, derived from the records signal. For each Telraam
-    // segment in the catalogue, find the latest record (across Total +
-    // directional variants); the *oldest* of those is the most pessimistic
-    // freshness number — surfaces a stalled sensor while still moving when
-    // every sensor is current. The hover title carries a per-segment
-    // breakdown so users can see exactly which one is lagging.
-    let telraam_freshness = move || -> Option<(String, String)> {
+    // Per-segment Telraam freshness. Each entry surfaces three timestamps so
+    // users can disambiguate cron health from sensor health:
+    //   - last_fetch:  api.json mtime (cron success — independent of sensor)
+    //   - last_record: newest hour with any data (sensor heartbeat)
+    //   - last_bike:   newest hour where bikes > 0 (last observed traffic)
+    //
+    // The visible header value is `last_record` — it ticks hourly while the
+    // sensor is alive even on quiet (zero-bike) hours. The tooltip exposes
+    // all three. The stale flag fires when the sensor has been silent for
+    // several hours despite a recent successful fetch (i.e. cron is fine
+    // but the sensor itself stopped reporting).
+    let telraam_freshness = move || -> Vec<TelraamSegStatus> {
         let recs = records.get();
         let srcs = app_sources.get();
+        let fetched = telraam_api_fetched.get();
         let segs: Vec<(String, String)> = srcs.iter()
             .filter(|s| matches!(s.loader_type, LoaderType::TelraamExcel { .. }))
             .map(|s| (s.id.clone(), s.name.clone()))
             .collect();
-        if segs.is_empty() { return None; }
 
-        let mut per_seg: Vec<(DateTime<Utc>, String)> = Vec::new();
+        let now = Utc::now();
+        let mut out = Vec::with_capacity(segs.len());
         for (id, name) in &segs {
             let prefix = format!("{}-", id);
-            let max_ts = recs.iter()
-                .filter(|r| r.source_id == *id || r.source_id.starts_with(&prefix))
-                .map(|r| r.timestamp)
-                .max();
-            if let Some(t) = max_ts { per_seg.push((t, name.clone())); }
+            let in_seg = |r: &CountRecord|
+                r.source_id == *id || r.source_id.starts_with(&prefix);
+            let last_record = recs.iter()
+                .filter(|r| in_seg(r))
+                .map(|r| r.timestamp).max();
+            let last_bike = recs.iter()
+                .filter(|r| in_seg(r) && r.modality == Modality::Bikes && r.count > 0.0)
+                .map(|r| r.timestamp).max();
+            let last_fetch = fetched.get(id).copied();
+            let is_stale = match last_record {
+                Some(t) => (now - t) > Duration::hours(STALE_HOURS),
+                None    => false,
+            };
+            let full_name = name.strip_suffix(" — Total")
+                .unwrap_or(name).to_string();
+            out.push(TelraamSegStatus {
+                short_label: short_segment_label(name),
+                full_name,
+                last_record, last_bike, last_fetch, is_stale,
+            });
         }
-        if per_seg.is_empty() { return None; }
-
-        let oldest = per_seg.iter().map(|(t, _)| *t).min()?;
-        let header = oldest.with_timezone(&chrono::Local)
-            .format("%Y-%m-%d %H:%M").to_string();
-        let mut tooltip_lines: Vec<(DateTime<Utc>, String)> = per_seg;
-        tooltip_lines.sort_by_key(|(t, _)| *t);
-        let tooltip = tooltip_lines.iter()
-            .map(|(t, n)| format!("{}: {}",
-                n,
-                t.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M")))
-            .collect::<Vec<_>>().join("\n");
-        Some((header, tooltip))
+        out
     };
 
     view! {
@@ -504,11 +525,51 @@ fn App() -> impl IntoView {
                 <span class="load-status">{status_text}</span>
                 <span class="data-status">{localized_status}</span>
                 <span class="data-status">
-                    {move || telraam_freshness().map(|(text, tooltip)| view! {
-                        <span title=tooltip>
-                            {format!("{}: {}", lang.get().t().telraam_data_prefix, text)}
-                        </span>
-                    })}
+                    {move || {
+                        let segs = telraam_freshness();
+                        if segs.is_empty() { return None; }
+                        let t = lang.get().t();
+                        let prefix = t.telraam_data_prefix;
+                        let na = t.value_unavailable;
+                        let label_fetch  = t.last_api_fetch;
+                        let label_record = t.last_record;
+                        let label_bike   = t.last_bike;
+                        let fmt_local = |dt: DateTime<Utc>| dt.with_timezone(&chrono::Local)
+                            .format("%Y-%m-%d %H:%M").to_string();
+                        let last = segs.len().saturating_sub(1);
+                        let entries: Vec<_> = segs.into_iter().enumerate().map(|(i, s)| {
+                            let value = s.last_record.map(fmt_local)
+                                .unwrap_or_else(|| na.to_string());
+                            let display = if s.is_stale {
+                                format!("{} {} ⚠", s.short_label, value)
+                            } else {
+                                format!("{} {}", s.short_label, value)
+                            };
+                            let tooltip = format!(
+                                "{}\n  {}: {}\n  {}: {}\n  {}: {}",
+                                s.full_name,
+                                label_fetch,  s.last_fetch.map(fmt_local)
+                                    .unwrap_or_else(|| na.to_string()),
+                                label_record, s.last_record.map(fmt_local)
+                                    .unwrap_or_else(|| na.to_string()),
+                                label_bike,   s.last_bike.map(fmt_local)
+                                    .unwrap_or_else(|| na.to_string()),
+                            );
+                            let sep = if i < last { Some(" · ") } else { None };
+                            view! {
+                                <span class="telraam-seg" class:stale=s.is_stale title=tooltip>
+                                    {display}
+                                </span>
+                                {sep}
+                            }
+                        }).collect();
+                        Some(view! {
+                            <>
+                                {format!("{}: ", prefix)}
+                                {entries}
+                            </>
+                        })
+                    }}
                 </span>
                 <button class="lang-toggle"
                         title="Language / Langue"
@@ -554,6 +615,38 @@ fn App() -> impl IntoView {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Hours of silence (no records produced for a Telraam segment) before the
+/// header bar flags it stale. A live sensor reports every hour even on
+/// quiet ones, so anything beyond a few hours indicates a real outage.
+const STALE_HOURS: i64 = 4;
+
+/// Per-segment Telraam freshness data, surfaced in the header bar.
+struct TelraamSegStatus {
+    /// Short label for visible display (e.g. "King Edward").
+    short_label: String,
+    /// Full source name for the tooltip header.
+    full_name:   String,
+    /// Newest hour with any record — sensor heartbeat.
+    last_record: Option<DateTime<Utc>>,
+    /// Newest hour with bikes > 0 — last observed bike traffic.
+    last_bike:   Option<DateTime<Utc>>,
+    /// `Last-Modified` of the cron-written api.json — last successful fetch.
+    last_fetch:  Option<DateTime<Utc>>,
+    /// True when `last_record` is older than `STALE_HOURS` hours.
+    is_stale:    bool,
+}
+
+/// Compact display label for a Telraam segment, derived from its full name
+/// by taking the cross-street after " @ " and dropping the " — Total"
+/// suffix that the catalogue appends to the aggregated source. Falls back
+/// to the full name when the convention isn't followed.
+fn short_segment_label(full_name: &str) -> String {
+    let cross = full_name.rsplit_once(" @ ")
+        .map(|(_, c)| c)
+        .unwrap_or(full_name);
+    cross.strip_suffix(" — Total").unwrap_or(cross).to_string()
+}
 
 /// Expand the visible date window to include all timestamps in `recs`.
 /// Never shrinks an existing bound — only moves `from` earlier or `to` later.

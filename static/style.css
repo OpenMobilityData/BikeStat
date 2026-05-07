@@ -67,6 +67,10 @@ header .data-status {
 
 header .data-status:empty { display: none; }
 
+/* Per-segment Telraam chip — same hue as ambient text by default; the
+   stale variant flags a sensor whose latest record is hours behind. */
+header .telraam-seg.stale { color: var(--warning, #f5a623); }
+
 /* ── Sidebar ── */
 aside {
     grid-area: sidebar;
