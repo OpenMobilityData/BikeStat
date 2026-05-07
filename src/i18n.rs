@@ -90,6 +90,7 @@ pub struct T {
     pub last_month: &'static str,
     pub last_3_months: &'static str,
     pub last_6_months: &'static str,
+    pub last_year: &'static str,
     pub summer: &'static str,
     pub winter: &'static str,
 
@@ -130,6 +131,7 @@ pub const EN: T = T {
     last_month: "Last Month",
     last_3_months: "Last 3 Months",
     last_6_months: "Last 6 Months",
+    last_year: "Last Year",
     summer: "Summer",
     winter: "Winter",
 
@@ -169,6 +171,7 @@ pub const FR: T = T {
     last_month: "Mois dernier",
     last_3_months: "3 derniers mois",
     last_6_months: "6 derniers mois",
+    last_year: "Année dernière",
     summer: "Été",
     winter: "Hiver",
 

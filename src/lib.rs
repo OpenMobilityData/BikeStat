@@ -658,11 +658,12 @@ fn compute_date_presets(from_str: &str, to_str: &str, lang: Lang) -> Vec<(String
     out.push(entry(t.all_dates, data_from, data_to));
 
     // ── Relative presets, anchored at the latest record ──
-    let relatives: [(&str, Option<NaiveDate>); 4] = [
+    let relatives: [(&str, Option<NaiveDate>); 5] = [
         (t.last_week,     Some(data_to - Duration::days(7))),
         (t.last_month,    data_to.checked_sub_months(Months::new(1))),
         (t.last_3_months, data_to.checked_sub_months(Months::new(3))),
         (t.last_6_months, data_to.checked_sub_months(Months::new(6))),
+        (t.last_year,     data_to.checked_sub_months(Months::new(12)).map(|d| d + Duration::days(1))),
     ];
     for (label, from_opt) in relatives {
         if let Some(from_dt) = from_opt {
