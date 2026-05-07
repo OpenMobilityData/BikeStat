@@ -121,7 +121,7 @@ pub const EN: T = T {
 
     locations: "Locations",
     modalities: "Modalities",
-    resolution: "Resolution",
+    resolution: "Counts per",
     date_range: "Date range",
     custom_range: "Custom range",
     year_on_year: "Year-on-Year",
@@ -167,7 +167,7 @@ pub const FR: T = T {
 
     locations: "Emplacements",
     modalities: "Modalités",
-    resolution: "Résolution",
+    resolution: "Comptages par",
     date_range: "Plage de dates",
     custom_range: "Plage personnalisée",
     year_on_year: "Comparaison annuelle",
