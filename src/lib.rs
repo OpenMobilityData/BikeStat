@@ -251,6 +251,30 @@ fn App() -> impl IntoView {
         set_view_mode.set(ViewMode::YearOnYear);
     });
 
+    // Winter-on-Winter: filter to the Nov 16 – Mar 31 window, anchor on the
+    // earliest winter season represented in the selection, and fold every
+    // later winter onto that 4.5-month axis. No-op if the selection has no
+    // records inside any winter window.
+    let on_winter_on_winter = Callback::new(move |_: ()| {
+        let recs = records.get_untracked();
+        let mods = selected_mods.get_untracked();
+        let srcs = selected_srcs.get_untracked();
+        let earliest_winter_year = recs.iter()
+            .filter(|r| mods.contains(&r.modality) && srcs.contains(&r.source_id))
+            .filter_map(|r| winter_season_year(r.timestamp))
+            .min();
+        let Some(y) = earliest_winter_year else { return };
+        let (sm, sd) = WINTER_START_MD;
+        let (em, ed) = WINTER_END_MD;
+        let from_d = NaiveDate::from_ymd_opt(y,     sm, sd)
+            .expect("Nov 16 is always a valid date");
+        let to_d   = NaiveDate::from_ymd_opt(y + 1, em, ed)
+            .expect("Mar 31 is always a valid date");
+        set_date_from.set(from_d.format("%Y-%m-%d").to_string());
+        set_date_to.set(to_d.format("%Y-%m-%d").to_string());
+        set_view_mode.set(ViewMode::WinterOnWinter);
+    });
+
     // ── Derived chart series ──
     let chart_series = move || -> Vec<Series> {
         let recs     = records.get();
@@ -331,25 +355,74 @@ fn App() -> impl IntoView {
                 }
                 out
             }
+            ViewMode::WinterOnWinter => {
+                // The anchor winter season is determined by the start of the
+                // current date window: a `from_dt` of YYYY-11-16 anchors on
+                // winter YYYY/YYYY+1.  Each point is bucketed by which winter
+                // season it falls into and shifted back so all winters share
+                // the same Nov 16 – Mar 31 axis.
+                let Some(start) = from_dt else { return vec![]; };
+                let anchor_year = start.year();
+                let mut out = vec![];
+                for modality in &mods {
+                    for src_id in &srcs {
+                        let Some(meta) = all_srcs.iter().find(|s| &s.id == src_id) else { continue };
+                        if !meta.modalities.contains(modality) { continue; }
+                        let pts = loader::aggregate(&recs, *modality, res, Some(src_id));
+                        if pts.is_empty() { continue; }
+
+                        let mut by_winter: BTreeMap<i32, Vec<(DateTime<Utc>, f64)>> = BTreeMap::new();
+                        for (t, v) in pts {
+                            let Some(wy) = winter_season_year(t) else { continue };
+                            let offset = wy - anchor_year;
+                            if offset < 0 { continue; }
+                            by_winter.entry(offset).or_default().push((shift_back_years(t, offset), v));
+                        }
+                        for (offset, winter_pts) in by_winter {
+                            let y0 = anchor_year + offset;
+                            let label = format!("{}/{}", y0, y0 + 1);
+                            out.push(Series {
+                                label:  format!("{} – {} ({})", meta.name, modality.label(l), label),
+                                color:  yoy_color(offset),
+                                dash:   modality.stroke_dasharray().unwrap_or("").to_string(),
+                                points: winter_pts,
+                            });
+                        }
+                    }
+                }
+                out
+            }
         }
     };
 
     let (chart_sig, set_chart_sig) = signal::<Vec<Series>>(vec![]);
     Effect::new(move |_| set_chart_sig.set(chart_series()));
 
-    // X-axis override: a fixed 12-month range when in YearOnYear mode.
+    // X-axis override: a fixed 12-month range when in YearOnYear mode, or
+    // the Nov 16 – Mar 31 winter window when in WinterOnWinter mode.  In both
+    // cases the visible axis is anchored on `date_from` (set by the callback
+    // that switched into the mode) so late-arriving data can't shift it.
     let (x_range_sig, set_x_range_sig) =
         signal::<Option<(DateTime<Utc>, DateTime<Utc>)>>(None);
     Effect::new(move |_| {
-        let xr = if view_mode.get() == ViewMode::YearOnYear {
-            NaiveDate::parse_from_str(&date_from.get(), "%Y-%m-%d").ok()
+        let xr = match view_mode.get() {
+            ViewMode::Linear => None,
+            ViewMode::YearOnYear => NaiveDate::parse_from_str(&date_from.get(), "%Y-%m-%d").ok()
                 .and_then(|d| {
                     let end_d = d.checked_add_months(Months::new(12))?;
                     let start = Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0)?);
                     let end   = Utc.from_utc_datetime(&end_d.and_hms_opt(23, 59, 59)?);
                     Some((start, end))
-                })
-        } else { None };
+                }),
+            ViewMode::WinterOnWinter => NaiveDate::parse_from_str(&date_from.get(), "%Y-%m-%d").ok()
+                .and_then(|d| {
+                    let (em, ed) = WINTER_END_MD;
+                    let end_d = NaiveDate::from_ymd_opt(d.year() + 1, em, ed)?;
+                    let start = Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0)?);
+                    let end   = Utc.from_utc_datetime(&end_d.and_hms_opt(23, 59, 59)?);
+                    Some((start, end))
+                }),
+        };
         set_x_range_sig.set(xr);
     });
 
@@ -465,6 +538,7 @@ fn App() -> impl IntoView {
 
                 view_mode=view_mode
                 on_year_on_year=on_year_on_year
+                on_winter_on_winter=on_winter_on_winter
             />
 
             <main>
@@ -483,8 +557,8 @@ fn App() -> impl IntoView {
 
 /// Expand the visible date window to include all timestamps in `recs`.
 /// Never shrinks an existing bound — only moves `from` earlier or `to` later.
-/// Skipped while in YearOnYear mode so late-arriving data doesn't shift the
-/// 12-month axis out from under the user.
+/// Skipped while in YearOnYear or WinterOnWinter mode so late-arriving data
+/// doesn't shift the fixed comparison axis out from under the user.
 fn update_date_range(
     recs: &[CountRecord],
     view_mode: ReadSignal<ViewMode>,
@@ -493,7 +567,8 @@ fn update_date_range(
     set_from:  WriteSignal<String>,
     set_to:    WriteSignal<String>,
 ) {
-    if view_mode.get_untracked() == ViewMode::YearOnYear { return; }
+    let mode = view_mode.get_untracked();
+    if matches!(mode, ViewMode::YearOnYear | ViewMode::WinterOnWinter) { return; }
 
     let (Some(new_first), Some(new_last)) = (
         recs.iter().map(|r| r.timestamp).min(),
@@ -677,6 +752,36 @@ fn shift_back_years(t: DateTime<Utc>, years: i32) -> DateTime<Utc> {
         .checked_sub_months(Months::new(12 * years as u32))
         .unwrap_or_else(|| t.date_naive());
     Utc.from_utc_datetime(&date.and_time(t.time()))
+}
+
+// ── Winter-on-Winter helpers ─────────────────────────────────────────────────
+//
+// A "winter" is the period from Nov 16 of year Y to Mar 31 of year Y+1
+// (~4.5 months).  Each winter is identified by its starting calendar year Y
+// and labelled "Winter Y/Y+1".  These helpers let the chart filter records
+// to the winter window and align successive winters on a single axis.
+
+/// First day of the winter window (inclusive), expressed as (month, day).
+const WINTER_START_MD: (u32, u32) = (11, 16);
+/// Last day of the winter window (inclusive), expressed as (month, day).
+const WINTER_END_MD:   (u32, u32) = (3, 31);
+
+/// Calendar year `Y` such that `t` belongs to "Winter Y/Y+1", or `None` if
+/// `t` is outside the Nov 16 – Mar 31 window.
+fn winter_season_year(t: DateTime<Utc>) -> Option<i32> {
+    let d = t.date_naive();
+    let (m, day) = (d.month(), d.day());
+    let (sm, sd) = WINTER_START_MD;
+    let (em, _ed) = WINTER_END_MD;
+    if m > sm || (m == sm && day >= sd) {
+        // Nov 16 – Dec 31: winter starting this year
+        Some(d.year())
+    } else if m < em || m == em {
+        // Jan 1 – Mar 31: winter that started last November
+        Some(d.year() - 1)
+    } else {
+        None
+    }
 }
 
 /// Distinct-hue palette for Year-on-Year buckets, tuned for the dark theme.

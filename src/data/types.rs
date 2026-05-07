@@ -53,8 +53,11 @@ pub enum Resolution { Hour, Day, Week, Month }
 /// How the chart plots time. `Linear` is the default — one continuous time
 /// axis. `YearOnYear` collapses every 12-month block of data onto a shared
 /// 12-month axis so seasonal patterns can be compared across years.
+/// `WinterOnWinter` is the seasonal counterpart: it filters data to the
+/// Nov 16 – Mar 31 window and overlays each winter onto a single ~4.5-month
+/// axis so multiple winters can be compared directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ViewMode { Linear, YearOnYear }
+pub enum ViewMode { Linear, YearOnYear, WinterOnWinter }
 
 impl Resolution {
     pub fn label(&self, lang: Lang) -> &'static str {

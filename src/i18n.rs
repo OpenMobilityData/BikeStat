@@ -69,6 +69,7 @@ pub struct T {
     pub date_range: &'static str,
     pub custom_range: &'static str,
     pub year_on_year: &'static str,
+    pub winter_on_winter: &'static str,
     pub range_too_short: &'static str,
 
     // Modalities
@@ -111,6 +112,7 @@ pub const EN: T = T {
     date_range: "Date range",
     custom_range: "Custom range",
     year_on_year: "Year-on-Year",
+    winter_on_winter: "Winter-on-Winter",
     range_too_short: "Range too short for resolution",
 
     bikes: "Bikes",
@@ -149,6 +151,7 @@ pub const FR: T = T {
     date_range: "Plage de dates",
     custom_range: "Plage personnalisée",
     year_on_year: "Comparaison annuelle",
+    winter_on_winter: "Comparaison hivernale",
     range_too_short: "Plage trop courte pour la résolution",
 
     bikes: "Vélos",

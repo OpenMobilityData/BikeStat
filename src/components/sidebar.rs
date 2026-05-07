@@ -24,6 +24,7 @@ pub fn Sidebar(
 
     view_mode: ReadSignal<ViewMode>,
     on_year_on_year: Callback<()>,
+    on_winter_on_winter: Callback<()>,
 ) -> impl IntoView {
     let lang = use_context::<ReadSignal<Lang>>().expect("Lang context not provided");
     view! {
@@ -175,6 +176,11 @@ pub fn Sidebar(
                         class=move || if view_mode.get() == ViewMode::YearOnYear { "active" } else { "" }
                         on:click=move |_| on_year_on_year.run(())>
                         {move || lang.get().t().year_on_year}
+                    </button>
+                    <button
+                        class=move || if view_mode.get() == ViewMode::WinterOnWinter { "active" } else { "" }
+                        on:click=move |_| on_winter_on_winter.run(())>
+                        {move || lang.get().t().winter_on_winter}
                     </button>
                 </div>
             </div>
