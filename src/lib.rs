@@ -564,11 +564,17 @@ fn App() -> impl IntoView {
             };
             let full_name = name.strip_suffix(" — Total")
                 .unwrap_or(name).to_string();
-            let link_url = telraam_annotation(id)
+            let ann = telraam_annotation(id);
+            let link_url = ann
                 .map(|a| telraam_segment_url(a.api_id))
                 .unwrap_or_else(|| "https://telraam.net/".to_string());
+            let cross = cross_street(name);
+            let short_label = match ann {
+                Some(a) => format!("{}@{}", a.street_abbrev, cross),
+                None    => cross,
+            };
             out.push(TelraamSegStatus {
-                short_label: short_segment_label(name),
+                short_label,
                 full_name,
                 last_record, last_bike, last_fetch, is_stale,
                 link_url,
@@ -736,11 +742,12 @@ fn telraam_segment_url(api_id: &str) -> String {
         end.format("%Y-%m-%d"))
 }
 
-/// Compact display label for a Telraam segment, derived from its full name
-/// by taking the cross-street after " @ " and dropping the " — Total"
-/// suffix that the catalogue appends to the aggregated source. Falls back
-/// to the full name when the convention isn't followed.
-fn short_segment_label(full_name: &str) -> String {
+/// Cross-street of a Telraam segment, parsed from the part of `full_name`
+/// after " @ " with the " — Total" suffix dropped. Combined with the
+/// annotation's `street_abbrev` to form a header chip label like
+/// `"TB@King Edward"`. Falls back to the full name when the convention
+/// isn't followed (e.g. for sources without a cross-street).
+fn cross_street(full_name: &str) -> String {
     let cross = full_name.rsplit_once(" @ ")
         .map(|(_, c)| c)
         .unwrap_or(full_name);

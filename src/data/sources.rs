@@ -42,6 +42,11 @@ pub struct TelraamAnnotation {
     /// Should identify the street and cross-street, e.g.
     /// `"Telraam: Terrebonne @ de Courtrai (NDG)"`.
     pub display_name: &'static str,
+    /// Compact tag for the monitored street, used in the freshness chips
+    /// where horizontal space is tight (e.g. `"TB"` for Terrebonne, `"NDG"`
+    /// for Notre-Dame-de-Grâce). Combined with the cross-street parsed from
+    /// `display_name` to form a chip label like `"TB@King Edward"`.
+    pub street_abbrev: &'static str,
     /// Label for the A→B travel direction.
     /// Set to a compass direction once confirmed from the Telraam segment map,
     /// e.g. `"Eastbound"` or `"→ Snowdon"`.
@@ -64,6 +69,7 @@ static TELRAAM_ANNOTATIONS: &[(&str, TelraamAnnotation)] = &[
         "telraam-9794",
         TelraamAnnotation {
             display_name: "Telraam: Terrebonne @ King Edward",
+            street_abbrev: "TB",
             dir_a_to_b: "Eastbound",
             dir_b_to_a: "Westbound",
             api_id: "9000007290",
@@ -73,11 +79,22 @@ static TELRAAM_ANNOTATIONS: &[(&str, TelraamAnnotation)] = &[
         "telraam-10045",
         TelraamAnnotation {
             display_name: "Telraam: Terrebonne @ Royal",
+            street_abbrev: "TB",
             // Note: A/B orientation is reversed relative to the King Edward
             // segment — confirmed against the Telraam segment map.
             dir_a_to_b: "Westbound",
             dir_b_to_a: "Eastbound",
             api_id: "9000007489",
+        },
+    ),
+    (
+        "telraam-9000011055",
+        TelraamAnnotation {
+            display_name: "Telraam: NDG @ Hampton",
+            street_abbrev: "NDG",
+            dir_a_to_b: "Eastbound",
+            dir_b_to_a: "Westbound",
+            api_id: "9000011055",
         },
     ),
 ];
@@ -130,6 +147,22 @@ pub fn telraam_sources() -> Vec<DataSource> {
             "data/telraam/10045/2026.xlsx".into(),
         ],
         8, // base_color_idx: +1 → A→B, +2 → B→A
+    );
+
+    // NDG @ Hampton — installed 2026-04-16, basic subscription (no historical
+    // xlsx export available, so file_urls is empty; the cron-written API
+    // snapshot is the sole record source). Coordinates are the midpoint of
+    // the Telraam segment line. base_color_idx 14 wraps around the 15-slot
+    // SOURCE_COLORS palette (Telraam used 5, 8; CDN-NDG used 11), so the
+    // directional sub-sources land on indices 0 and 1 — visually distinct
+    // from existing Telraam/CDN-NDG markers.
+    push_telraam_segment(
+        &mut out,
+        "telraam-9000011055",
+        LatLon { lat: 45.46932, lon: -73.62251 },
+        Utc.with_ymd_and_hms(2026, 4, 16, 0, 0, 0).unwrap(),
+        vec![],
+        14, // base_color_idx: +1 → A→B, +2 → B→A
     );
 
     out
