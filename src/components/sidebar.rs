@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use leptos::prelude::*;
 use crate::data::types::{DataSource, Modality, Resolution, ViewMode};
 use crate::i18n::Lang;
@@ -14,13 +15,13 @@ pub fn Sidebar(
     selected_modalities: ReadSignal<Vec<Modality>>,
     on_modality_toggle: Callback<Modality>,
 
-    date_from: ReadSignal<String>,
-    date_to: ReadSignal<String>,
-    on_date_from: Callback<String>,
-    on_date_to: Callback<String>,
+    date_from: ReadSignal<NaiveDate>,
+    date_to: ReadSignal<NaiveDate>,
+    on_date_from: Callback<NaiveDate>,
+    on_date_to: Callback<NaiveDate>,
 
-    date_presets: ReadSignal<Vec<(String, String, String, i64)>>,
-    on_date_preset: Callback<(String, String)>,
+    date_presets: ReadSignal<Vec<(String, NaiveDate, NaiveDate, i64)>>,
+    on_date_preset: Callback<(NaiveDate, NaiveDate)>,
 
     view_mode: ReadSignal<ViewMode>,
     on_year_on_year: Callback<()>,
@@ -166,7 +167,7 @@ pub fn Sidebar(
                                 <button
                                     disabled=disabled
                                     title=title
-                                    on:click=move |_| on_date_preset.run((from.clone(), to.clone()))>
+                                    on:click=move |_| on_date_preset.run((from, to))>
                                     {label}
                                 </button>
                             }
@@ -190,14 +191,20 @@ pub fn Sidebar(
                 <label class="section-label">{move || lang.get().t().custom_range}</label>
                 <div class="date-range">
                     <input type="date"
-                           prop:value=move || date_from.get()
+                           prop:value=move || date_from.get().format("%Y-%m-%d").to_string()
                            on:input=move |e| {
-                               on_date_from.run(event_target_value(&e));
+                               if let Ok(d) = NaiveDate::parse_from_str(
+                                   &event_target_value(&e), "%Y-%m-%d") {
+                                   on_date_from.run(d);
+                               }
                            }/>
                     <input type="date"
-                           prop:value=move || date_to.get()
+                           prop:value=move || date_to.get().format("%Y-%m-%d").to_string()
                            on:input=move |e| {
-                               on_date_to.run(event_target_value(&e));
+                               if let Ok(d) = NaiveDate::parse_from_str(
+                                   &event_target_value(&e), "%Y-%m-%d") {
+                                   on_date_to.run(d);
+                               }
                            }/>
                 </div>
             </div>

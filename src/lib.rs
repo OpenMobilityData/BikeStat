@@ -42,8 +42,12 @@ fn App() -> impl IntoView {
     let (view_mode,     set_view_mode)     = signal(ViewMode::Linear);
 
     let now = Utc::now();
-    let (date_from, set_date_from) = signal(format!("{}-01-01", now.year()));
-    let (date_to,   set_date_to)   = signal(format!("{}-12-31", now.year()));
+    let (date_from, set_date_from) = signal(
+        NaiveDate::from_ymd_opt(now.year(), 1, 1).expect("Jan 1 is always valid")
+    );
+    let (date_to, set_date_to) = signal(
+        NaiveDate::from_ymd_opt(now.year(), 12, 31).expect("Dec 31 is always valid")
+    );
 
     // Filter panel toggle for narrow viewports.  CSS hides the sidebar by
     // default below ~768px and reveals it when this is true.  On wider
@@ -222,23 +226,19 @@ fn App() -> impl IntoView {
     // Includes "All dates", relative ranges (Last Week … Last 6 Months),
     // calendar years, and seasonal Summer/Winter ranges that overlap the data.
     let (date_presets, set_date_presets) =
-        signal::<Vec<(String, String, String, i64)>>(vec![]);
+        signal::<Vec<(String, NaiveDate, NaiveDate, i64)>>(vec![]);
     Effect::new(move |_| {
         let recs = records.get();
-        let first = recs.iter().map(|r| r.timestamp).min();
-        let last  = recs.iter().map(|r| r.timestamp).max();
+        let first = recs.iter().map(|r| r.timestamp.date_naive()).min();
+        let last  = recs.iter().map(|r| r.timestamp.date_naive()).max();
         let presets = match (first, last) {
-            (Some(f), Some(l)) => compute_date_presets(
-                &f.format("%Y-%m-%d").to_string(),
-                &l.format("%Y-%m-%d").to_string(),
-                lang.get(),
-            ),
+            (Some(f), Some(l)) => compute_date_presets(f, l, lang.get()),
             _ => vec![],
         };
         set_date_presets.set(presets);
     });
 
-    let on_date_preset = Callback::new(move |(from, to): (String, String)| {
+    let on_date_preset = Callback::new(move |(from, to): (NaiveDate, NaiveDate)| {
         set_view_mode.set(ViewMode::Linear);
         set_date_from.set(from);
         set_date_to.set(to);
@@ -259,8 +259,8 @@ fn App() -> impl IntoView {
         let Some(start) = earliest else { return };
         let start_d = start.date_naive();
         let end_d = start_d.checked_add_months(Months::new(12)).unwrap_or(start_d);
-        set_date_from.set(start_d.format("%Y-%m-%d").to_string());
-        set_date_to.set(end_d.format("%Y-%m-%d").to_string());
+        set_date_from.set(start_d);
+        set_date_to.set(end_d);
         set_view_mode.set(ViewMode::YearOnYear);
     });
 
@@ -283,8 +283,8 @@ fn App() -> impl IntoView {
             .expect("Nov 16 is always a valid date");
         let to_d   = NaiveDate::from_ymd_opt(y + 1, em, ed)
             .expect("Mar 31 is always a valid date");
-        set_date_from.set(from_d.format("%Y-%m-%d").to_string());
-        set_date_to.set(to_d.format("%Y-%m-%d").to_string());
+        set_date_from.set(from_d);
+        set_date_to.set(to_d);
         set_view_mode.set(ViewMode::WinterOnWinter);
     });
 
@@ -295,16 +295,14 @@ fn App() -> impl IntoView {
         let res      = resolution.get();
         let srcs     = selected_srcs.get();
         let all_srcs = app_sources.get();
-        let from_str = date_from.get();
-        let to_str   = date_to.get();
-        let mode     = view_mode.get();
-        let l        = lang.get();
+        let from_d = date_from.get();
+        let to_d   = date_to.get();
+        let mode   = view_mode.get();
+        let l      = lang.get();
 
-        let from_dt = NaiveDate::parse_from_str(&from_str, "%Y-%m-%d")
-            .ok().and_then(|d| d.and_hms_opt(0, 0, 0))
+        let from_dt = from_d.and_hms_opt(0, 0, 0)
             .map(|ndt| Utc.from_utc_datetime(&ndt));
-        let to_dt = NaiveDate::parse_from_str(&to_str, "%Y-%m-%d")
-            .ok().and_then(|d| d.and_hms_opt(23, 59, 59))
+        let to_dt = to_d.and_hms_opt(23, 59, 59)
             .map(|ndt| Utc.from_utc_datetime(&ndt));
 
         match mode {
@@ -420,21 +418,23 @@ fn App() -> impl IntoView {
     Effect::new(move |_| {
         let xr = match view_mode.get() {
             ViewMode::Linear => None,
-            ViewMode::YearOnYear => NaiveDate::parse_from_str(&date_from.get(), "%Y-%m-%d").ok()
-                .and_then(|d| {
-                    let end_d = d.checked_add_months(Months::new(12))?;
+            ViewMode::YearOnYear => {
+                let d = date_from.get();
+                d.checked_add_months(Months::new(12)).and_then(|end_d| {
                     let start = Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0)?);
                     let end   = Utc.from_utc_datetime(&end_d.and_hms_opt(23, 59, 59)?);
                     Some((start, end))
-                }),
-            ViewMode::WinterOnWinter => NaiveDate::parse_from_str(&date_from.get(), "%Y-%m-%d").ok()
-                .and_then(|d| {
-                    let (em, ed) = WINTER_END_MD;
-                    let end_d = NaiveDate::from_ymd_opt(d.year() + 1, em, ed)?;
+                })
+            }
+            ViewMode::WinterOnWinter => {
+                let d = date_from.get();
+                let (em, ed) = WINTER_END_MD;
+                NaiveDate::from_ymd_opt(d.year() + 1, em, ed).and_then(|end_d| {
                     let start = Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0)?);
                     let end   = Utc.from_utc_datetime(&end_d.and_hms_opt(23, 59, 59)?);
                     Some((start, end))
-                }),
+                })
+            }
         };
         set_x_range_sig.set(xr);
     });
@@ -673,8 +673,8 @@ fn App() -> impl IntoView {
 
                 date_from=date_from
                 date_to=date_to
-                on_date_from=Callback::new(move |s| set_date_from.set(s))
-                on_date_to=Callback::new(move |s| set_date_to.set(s))
+                on_date_from=Callback::new(move |d| set_date_from.set(d))
+                on_date_to=Callback::new(move |d| set_date_to.set(d))
 
                 date_presets=date_presets
                 on_date_preset=on_date_preset
@@ -761,31 +761,21 @@ fn cross_street(full_name: &str) -> String {
 fn update_date_range(
     recs: &[CountRecord],
     view_mode: ReadSignal<ViewMode>,
-    date_from: ReadSignal<String>,
-    date_to:   ReadSignal<String>,
-    set_from:  WriteSignal<String>,
-    set_to:    WriteSignal<String>,
+    date_from: ReadSignal<NaiveDate>,
+    date_to:   ReadSignal<NaiveDate>,
+    set_from:  WriteSignal<NaiveDate>,
+    set_to:    WriteSignal<NaiveDate>,
 ) {
     let mode = view_mode.get_untracked();
     if matches!(mode, ViewMode::YearOnYear | ViewMode::WinterOnWinter) { return; }
 
     let (Some(new_first), Some(new_last)) = (
-        recs.iter().map(|r| r.timestamp).min(),
-        recs.iter().map(|r| r.timestamp).max(),
+        recs.iter().map(|r| r.timestamp.date_naive()).min(),
+        recs.iter().map(|r| r.timestamp.date_naive()).max(),
     ) else { return };
 
-    let parse = |s: String| NaiveDate::parse_from_str(&s, "%Y-%m-%d")
-        .ok()
-        .and_then(|d| d.and_hms_opt(0, 0, 0))
-        .map(|ndt| Utc.from_utc_datetime(&ndt));
-
-    let from = parse(date_from.get_untracked())
-        .map_or(new_first, |cur| cur.min(new_first));
-    let to   = parse(date_to.get_untracked())
-        .map_or(new_last,  |cur| cur.max(new_last));
-
-    set_from.set(from.format("%Y-%m-%d").to_string());
-    set_to.set(to.format("%Y-%m-%d").to_string());
+    set_from.set(date_from.get_untracked().min(new_first));
+    set_to.set(date_to.get_untracked().max(new_last));
 }
 
 /// Append `new_recs` to `records`, skipping any whose `(source_id,
@@ -839,16 +829,15 @@ fn replace_msg(signal: &WriteSignal<Vec<String>>, old: &str, new: &str) {
 ///      (nominal Jan 1 → Dec 31; chart filtering handles partial coverage).
 ///   4. Seasonal — Summer (Apr 1 → Nov 15) and Winter (Nov 16 → Mar 31 of
 ///      the following year) entries that overlap the data, sorted by start.
-fn compute_date_presets(from_str: &str, to_str: &str, lang: Lang) -> Vec<(String, String, String, i64)> {
-    let Ok(data_from) = NaiveDate::parse_from_str(from_str, "%Y-%m-%d") else { return vec![] };
-    let Ok(data_to)   = NaiveDate::parse_from_str(to_str,   "%Y-%m-%d") else { return vec![] };
+fn compute_date_presets(
+    data_from: NaiveDate,
+    data_to:   NaiveDate,
+    lang:      Lang,
+) -> Vec<(String, NaiveDate, NaiveDate, i64)> {
     let t = lang.t();
 
     let entry = |label: &str, f: NaiveDate, tdate: NaiveDate| {
-        (label.to_string(),
-         f.format("%Y-%m-%d").to_string(),
-         tdate.format("%Y-%m-%d").to_string(),
-         (tdate - f).num_days())
+        (label.to_string(), f, tdate, (tdate - f).num_days())
     };
 
     let mut out = Vec::new();
