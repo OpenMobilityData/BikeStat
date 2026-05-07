@@ -153,7 +153,7 @@ pub const EN: T = T {
 };
 
 pub const FR: T = T {
-    subtitle: "Agrégateur de comptages de trafic",
+    subtitle: "Agrégateur de comptages de circulation",
     mobile_filters: "Filtres",
     mobile_close: "Fermer",
     vdm_data_prefix: "Données VdM",
