@@ -48,6 +48,10 @@ pub struct TelraamAnnotation {
     pub dir_a_to_b: &'static str,
     /// Label for the B→A travel direction.
     pub dir_b_to_a: &'static str,
+    /// Telraam-API segment id (a.k.a. "location id" on telraam.net), distinct
+    /// from the legacy directory id used as the source key. Used to build
+    /// attribution links to the segment's public Telraam page.
+    pub api_id: &'static str,
 }
 
 /// Lookup table of developer-provided annotations keyed by Telraam source ID.
@@ -62,6 +66,7 @@ static TELRAAM_ANNOTATIONS: &[(&str, TelraamAnnotation)] = &[
             display_name: "Telraam: Terrebonne @ King Edward",
             dir_a_to_b: "Eastbound",
             dir_b_to_a: "Westbound",
+            api_id: "9000007290",
         },
     ),
     (
@@ -72,6 +77,7 @@ static TELRAAM_ANNOTATIONS: &[(&str, TelraamAnnotation)] = &[
             // segment — confirmed against the Telraam segment map.
             dir_a_to_b: "Westbound",
             dir_b_to_a: "Eastbound",
+            api_id: "9000007489",
         },
     ),
 ];

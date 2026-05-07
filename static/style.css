@@ -71,6 +71,17 @@ header .data-status:empty { display: none; }
    stale variant flags a sensor whose latest record is hours behind. */
 header .telraam-seg.stale { color: var(--warning, #f5a623); }
 
+/* Status-bar links (VdM dataset, per-segment Telraam pages). Inherit the
+   ambient colour so an empty hover state matches the static text styling,
+   and only reveal the link affordance on hover. */
+header .vdm-link,
+header .telraam-seg {
+    color: inherit;
+    text-decoration: none;
+}
+header .vdm-link:hover,
+header .telraam-seg:hover { text-decoration: underline; }
+
 /* ── Sidebar ── */
 aside {
     grid-area: sidebar;

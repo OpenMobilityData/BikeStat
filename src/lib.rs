@@ -10,6 +10,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use data::{loader, sources};
+use data::sources::telraam_annotation;
 use data::types::{CountRecord, DataSource, LoaderType, Modality, Resolution, ViewMode};
 use components::chart::{Chart, Series};
 use components::map::SourceMap;
@@ -563,10 +564,14 @@ fn App() -> impl IntoView {
             };
             let full_name = name.strip_suffix(" — Total")
                 .unwrap_or(name).to_string();
+            let link_url = telraam_annotation(id)
+                .map(|a| telraam_segment_url(a.api_id))
+                .unwrap_or_else(|| "https://telraam.net/".to_string());
             out.push(TelraamSegStatus {
                 short_label: short_segment_label(name),
                 full_name,
                 last_record, last_bike, last_fetch, is_stale,
+                link_url,
             });
         }
         out
@@ -585,7 +590,13 @@ fn App() -> impl IntoView {
                 <h1>"BikeStat"</h1>
                 <span class="subtitle">{move || lang.get().t().subtitle}</span>
                 <span class="load-status">{status_text}</span>
-                <span class="data-status" title=vdm_tooltip>{localized_status}</span>
+                <span class="data-status">
+                    <a class="vdm-link" title=vdm_tooltip
+                       href=VDM_DATASET_URL
+                       target="_blank" rel="noopener noreferrer">
+                        {localized_status}
+                    </a>
+                </span>
                 <span class="data-status">
                     {move || {
                         let segs = telraam_freshness();
@@ -619,9 +630,12 @@ fn App() -> impl IntoView {
                             );
                             let sep = if i < last { Some(" · ") } else { None };
                             view! {
-                                <span class="telraam-seg" class:stale=s.is_stale title=tooltip>
+                                <a class="telraam-seg" class:stale=s.is_stale
+                                   title=tooltip
+                                   href=s.link_url
+                                   target="_blank" rel="noopener noreferrer">
                                     {display}
-                                </span>
+                                </a>
                                 {sep}
                             }
                         }).collect();
@@ -697,6 +711,29 @@ struct TelraamSegStatus {
     last_fetch:  Option<DateTime<Utc>>,
     /// True when `last_record` is older than `STALE_HOURS` hours.
     is_stale:    bool,
+    /// Public telraam.net page for this segment, if the annotation includes
+    /// an `api_id`. Empty string falls back to the Telraam home page so the
+    /// chip is still navigable (and the screen reader still announces it as
+    /// a link) for any future segment lacking an api_id.
+    link_url:    String,
+}
+
+/// Public dataset page for the Ville de Montréal cyclistes feed. Linked
+/// from the VdM freshness chip as attribution and a path back to the raw
+/// CSV / metadata.
+const VDM_DATASET_URL: &str = "https://donnees.montreal.ca/dataset/cyclistes";
+
+/// Build a `https://telraam.net/en/location/<api_id>/<from>/<to>` URL for a
+/// 7-day window ending yesterday — matches the format Telraam's own date
+/// picker emits and gives the user a useful default view of the segment.
+fn telraam_segment_url(api_id: &str) -> String {
+    let today = chrono::Local::now().date_naive();
+    let end   = today - chrono::Duration::days(1);
+    let start = today - chrono::Duration::days(7);
+    format!("https://telraam.net/en/location/{}/{}/{}",
+        api_id,
+        start.format("%Y-%m-%d"),
+        end.format("%Y-%m-%d"))
 }
 
 /// Compact display label for a Telraam segment, derived from its full name
