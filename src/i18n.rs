@@ -64,6 +64,8 @@ pub struct T {
     pub last_api_fetch: &'static str,
     pub last_record:    &'static str,
     pub last_bike:      &'static str,
+    pub last_successful_download: &'static str,
+    pub last_bike_record: &'static str,
     pub value_unavailable: &'static str,
 
     // Sidebar
@@ -113,6 +115,8 @@ pub const EN: T = T {
     last_api_fetch: "Last API call",
     last_record:    "Last record received",
     last_bike:      "Last hour with bikes",
+    last_successful_download: "Last successful download",
+    last_bike_record: "Last record with bikes",
     value_unavailable: "—",
 
     locations: "Locations",
@@ -157,6 +161,8 @@ pub const FR: T = T {
     last_api_fetch: "Dernier appel API",
     last_record:    "Dernier relevé reçu",
     last_bike:      "Dernière heure avec vélos",
+    last_successful_download: "Dernier téléchargement réussi",
+    last_bike_record: "Dernier relevé avec vélos",
     value_unavailable: "—",
 
     locations: "Emplacements",

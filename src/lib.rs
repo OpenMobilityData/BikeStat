@@ -462,6 +462,68 @@ fn App() -> impl IntoView {
         format!("{}: {}", lang.get().t().vdm_data_prefix, display)
     };
 
+    // VdM hover tooltip: per-intersection last bike record, parallel to the
+    // Telraam tooltip. The visible header value already shows the cron's
+    // last successful download time; this breakdown lets the user see how
+    // far behind each individual intersection is — which can lag the cron
+    // freshness by hours or days when the city batches uploads.
+    let vdm_tooltip = move || -> String {
+        let recs = records.get();
+        let srcs = app_sources.get();
+        let t = lang.get().t();
+        let na = t.value_unavailable;
+        let fmt_local = |dt: DateTime<Utc>| dt.with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M").to_string();
+
+        // Group VdM sources by their `group` key (= intersection total_id).
+        // Each group's display label comes from the Total source when one
+        // exists; falls back to the directional source's name with the
+        // direction suffix stripped, for single-direction intersections.
+        let mut group_ids: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut group_label: BTreeMap<String, String> = BTreeMap::new();
+        for s in srcs.iter().filter(|s| s.id.starts_with("mtl-")) {
+            let Some(g) = s.group.clone() else { continue };
+            group_ids.entry(g.clone()).or_default().push(s.id.clone());
+            let is_total = s.id == g;
+            if is_total || !group_label.contains_key(&g) {
+                let n = s.name.strip_prefix("VdM: ").unwrap_or(&s.name);
+                let n = n.strip_suffix(" (Total)").unwrap_or(n);
+                let n = n.split(" (").next().unwrap_or(n);
+                if is_total {
+                    group_label.insert(g.clone(), n.to_string());
+                } else {
+                    group_label.entry(g.clone()).or_insert_with(|| n.to_string());
+                }
+            }
+        }
+
+        let raw = data_status.get().unwrap_or_default();
+        let body = raw.trim().strip_prefix("VdM data: ").unwrap_or(raw.trim());
+        let download_time = match chrono::DateTime::parse_from_rfc3339(body) {
+            Ok(dt) => dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string(),
+            Err(_) if body.is_empty() => na.to_string(),
+            Err(_) => body.to_string(),
+        };
+
+        let mut lines = vec![
+            format!("{}: {}", t.last_successful_download, download_time),
+        ];
+        if !group_ids.is_empty() {
+            lines.push(format!("{}:", t.last_bike_record));
+            for (g, ids) in &group_ids {
+                let label = group_label.get(g).cloned().unwrap_or_else(|| g.clone());
+                let max_ts = recs.iter()
+                    .filter(|r| ids.iter().any(|id| id == &r.source_id)
+                            && r.modality == Modality::Bikes
+                            && r.count > 0.0)
+                    .map(|r| r.timestamp).max();
+                let val = max_ts.map(fmt_local).unwrap_or_else(|| na.to_string());
+                lines.push(format!("  {}: {}", label, val));
+            }
+        }
+        lines.join("\n")
+    };
+
     // Per-segment Telraam freshness. Each entry surfaces three timestamps so
     // users can disambiguate cron health from sensor health:
     //   - last_fetch:  api.json mtime (cron success — independent of sensor)
@@ -523,7 +585,7 @@ fn App() -> impl IntoView {
                 <h1>"BikeStat"</h1>
                 <span class="subtitle">{move || lang.get().t().subtitle}</span>
                 <span class="load-status">{status_text}</span>
-                <span class="data-status">{localized_status}</span>
+                <span class="data-status" title=vdm_tooltip>{localized_status}</span>
                 <span class="data-status">
                     {move || {
                         let segs = telraam_freshness();
