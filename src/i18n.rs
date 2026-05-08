@@ -77,6 +77,9 @@ pub struct T {
     pub year_on_year: &'static str,
     pub winter_on_winter: &'static str,
     pub range_too_short: &'static str,
+    pub daily_averaging: &'static str,
+    pub weekday: &'static str,
+    pub weekend: &'static str,
 
     // Modalities
     pub bikes: &'static str,
@@ -128,6 +131,9 @@ pub const EN: T = T {
     year_on_year: "Year-on-Year",
     winter_on_winter: "Winter-on-Winter",
     range_too_short: "Range too short for resolution",
+    daily_averaging: "Daily averaging",
+    weekday: "Weekday",
+    weekend: "Weekend",
 
     bikes: "Bikes",
     pedestrians: "Pedestrians",
@@ -175,6 +181,9 @@ pub const FR: T = T {
     year_on_year: "Comparaison annuelle",
     winter_on_winter: "Comparaison hivernale",
     range_too_short: "Plage trop courte pour la résolution",
+    daily_averaging: "Moyenne quotidienne",
+    weekday: "Semaine",
+    weekend: "Fin de semaine",
 
     bikes: "Vélos",
     pedestrians: "Piétons",

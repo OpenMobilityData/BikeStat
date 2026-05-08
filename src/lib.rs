@@ -2,16 +2,17 @@ mod data;
 mod components;
 mod i18n;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{DateTime, Datelike, Duration, Months, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, Months, NaiveDate, TimeZone, Timelike, Utc, Weekday};
+use chrono_tz::America::Montreal as MontrealTz;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use data::{loader, sources};
 use data::sources::telraam_annotation;
-use data::types::{CountRecord, DataSource, LoaderType, Modality, Resolution, ViewMode};
+use data::types::{CountRecord, DataSource, DayKind, LoaderType, Modality, Resolution, ViewMode};
 use components::chart::{Chart, Series};
 use components::map::SourceMap;
 use components::sidebar::Sidebar;
@@ -40,6 +41,10 @@ fn App() -> impl IntoView {
     let (selected_mods, set_selected_mods) = signal::<Vec<Modality>>(vec![Modality::Bikes]);
     let (resolution,    set_resolution)    = signal(Resolution::Day);
     let (view_mode,     set_view_mode)     = signal(ViewMode::Linear);
+    // Daily-averaging selection: empty == DailyAveraging mode is off. Toggling
+    // a kind on automatically switches view_mode to DailyAveraging and locks
+    // resolution to Hour; toggling the last kind off reverts to Linear.
+    let (selected_day_kinds, set_selected_day_kinds) = signal::<Vec<DayKind>>(vec![]);
 
     let now = Utc::now();
     let (date_from, set_date_from) = signal(
@@ -241,11 +246,34 @@ fn App() -> impl IntoView {
     let on_date_preset = Callback::new(
         move |(from, to, force_res): (NaiveDate, NaiveDate, Option<Resolution>)| {
             set_view_mode.set(ViewMode::Linear);
+            set_selected_day_kinds.set(vec![]);
             set_date_from.set(from);
             set_date_to.set(to);
             if let Some(r) = force_res { set_resolution.set(r); }
         },
     );
+
+    // Daily-averaging toggles: each click flips one kind in/out of the
+    // selection. Entering the mode locks resolution to Hour (averaging is
+    // inherently hourly). Leaving by toggling the last kind off reverts to
+    // Linear; the user's prior resolution is intentionally not restored —
+    // they'll usually want to see the current Hour view first anyway.
+    let on_day_kind_toggle = Callback::new(move |kind: DayKind| {
+        let mut next = selected_day_kinds.get_untracked();
+        if let Some(i) = next.iter().position(|&k| k == kind) {
+            next.remove(i);
+        } else {
+            next.push(kind);
+        }
+        let entering = !next.is_empty();
+        set_selected_day_kinds.set(next);
+        if entering {
+            set_view_mode.set(ViewMode::DailyAveraging);
+            set_resolution.set(Resolution::Hour);
+        } else {
+            set_view_mode.set(ViewMode::Linear);
+        }
+    });
 
     // Year-on-Year: anchor a 12-month axis at the earliest record matching
     // the current selection, fold all later years onto that axis, and color
@@ -264,6 +292,7 @@ fn App() -> impl IntoView {
         let end_d = start_d.checked_add_months(Months::new(12)).unwrap_or(start_d);
         set_date_from.set(start_d);
         set_date_to.set(end_d);
+        set_selected_day_kinds.set(vec![]);
         set_view_mode.set(ViewMode::YearOnYear);
     });
 
@@ -288,20 +317,22 @@ fn App() -> impl IntoView {
             .expect("Mar 31 is always a valid date");
         set_date_from.set(from_d);
         set_date_to.set(to_d);
+        set_selected_day_kinds.set(vec![]);
         set_view_mode.set(ViewMode::WinterOnWinter);
     });
 
     // ── Derived chart series ──
     let chart_series = move || -> Vec<Series> {
-        let recs     = records.get();
-        let mods     = selected_mods.get();
-        let res      = resolution.get();
-        let srcs     = selected_srcs.get();
-        let all_srcs = app_sources.get();
-        let from_d = date_from.get();
-        let to_d   = date_to.get();
-        let mode   = view_mode.get();
-        let l      = lang.get();
+        let recs      = records.get();
+        let mods      = selected_mods.get();
+        let res       = resolution.get();
+        let srcs      = selected_srcs.get();
+        let all_srcs  = app_sources.get();
+        let from_d    = date_from.get();
+        let to_d      = date_to.get();
+        let mode      = view_mode.get();
+        let day_kinds = selected_day_kinds.get();
+        let l         = lang.get();
 
         let from_dt = from_d.and_hms_opt(0, 0, 0)
             .map(|ndt| Utc.from_utc_datetime(&ndt));
@@ -406,6 +437,76 @@ fn App() -> impl IntoView {
                 }
                 out
             }
+            ViewMode::DailyAveraging => {
+                if day_kinds.is_empty() { return vec![]; }
+                // Anchor 24-hour axis on the local-midnight of `from_d`. The
+                // x-range effect below uses the same anchor so points and
+                // axis stay aligned.
+                let Some(anchor_dt) = from_d.and_hms_opt(0, 0, 0)
+                    .map(|ndt| Utc.from_utc_datetime(&ndt)) else { return vec![]; };
+
+                let mut out = vec![];
+                for &kind in &day_kinds {
+                    for modality in &mods {
+                        for src_id in &srcs {
+                            let Some((src_idx, meta)) = all_srcs.iter().enumerate()
+                                .find(|(_, s)| &s.id == src_id) else { continue };
+                            if !meta.modalities.contains(modality) { continue; }
+
+                            // Hour-of-day buckets in Montreal local time. Each
+                            // bucket tracks the running sum of counts and the
+                            // set of distinct local dates that contributed —
+                            // dividing gives the average for that hour.
+                            let mut sums: [f64; 24] = [0.0; 24];
+                            let mut day_sets: Vec<BTreeSet<NaiveDate>> =
+                                (0..24).map(|_| BTreeSet::new()).collect();
+
+                            for rec in recs.iter() {
+                                if rec.modality != *modality { continue; }
+                                if rec.source_id != *src_id { continue; }
+                                let local = rec.timestamp.with_timezone(&MontrealTz);
+                                let local_date = local.date_naive();
+                                if local_date < from_d || local_date > to_d { continue; }
+                                let is_weekend = matches!(local_date.weekday(),
+                                    Weekday::Sat | Weekday::Sun);
+                                let rec_kind = if is_weekend { DayKind::Weekend }
+                                               else { DayKind::Weekday };
+                                if rec_kind != kind { continue; }
+                                let h = local.hour() as usize;
+                                if h >= 24 { continue; }
+                                sums[h] += rec.count;
+                                day_sets[h].insert(local_date);
+                            }
+
+                            let points: Vec<(DateTime<Utc>, f64)> = (0..24)
+                                .filter_map(|h| {
+                                    let n = day_sets[h].len();
+                                    if n == 0 { return None; }
+                                    Some((anchor_dt + Duration::hours(h as i64),
+                                          sums[h] / n as f64))
+                                })
+                                .collect();
+                            if points.is_empty() { continue; }
+
+                            let kind_label = kind.label(l);
+                            // Reuse Linear's series_color so the user keeps a
+                            // stable per-source hue across mode switches; the
+                            // kind is encoded by appending the kind label.
+                            out.push(Series {
+                                label: format!("{} – {} ({})",
+                                    meta.name, modality.label(l), kind_label),
+                                color: series_color(*modality, src_idx),
+                                dash:  match kind {
+                                    DayKind::Weekday => "".to_string(),
+                                    DayKind::Weekend => "6 3".to_string(),
+                                },
+                                points,
+                            });
+                        }
+                    }
+                }
+                out
+            }
         }
     };
 
@@ -437,6 +538,18 @@ fn App() -> impl IntoView {
                     let end   = Utc.from_utc_datetime(&end_d.and_hms_opt(23, 59, 59)?);
                     Some((start, end))
                 })
+            }
+            ViewMode::DailyAveraging => {
+                // Span exactly 24 h (midnight to next midnight) so the chart's
+                // 4-hour ticks land on round hours instead of arbitrary
+                // fractional positions.
+                let d = date_from.get();
+                let next = d + Duration::days(1);
+                d.and_hms_opt(0, 0, 0).zip(next.and_hms_opt(0, 0, 0))
+                    .map(|(s, e)| (
+                        Utc.from_utc_datetime(&s),
+                        Utc.from_utc_datetime(&e),
+                    ))
             }
         };
         set_x_range_sig.set(xr);
@@ -685,10 +798,14 @@ fn App() -> impl IntoView {
                 view_mode=view_mode
                 on_year_on_year=on_year_on_year
                 on_winter_on_winter=on_winter_on_winter
+
+                selected_day_kinds=selected_day_kinds
+                on_day_kind_toggle=on_day_kind_toggle
             />
 
             <main>
-                <Chart series=chart_sig x_range=x_range_sig resolution=resolution />
+                <Chart series=chart_sig x_range=x_range_sig resolution=resolution
+                       view_mode=view_mode />
                 <SourceMap
                     sources=app_sources
                     selected=selected_srcs

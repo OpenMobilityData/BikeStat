@@ -56,8 +56,28 @@ pub enum Resolution { Hour, Day, Week, Month }
 /// `WinterOnWinter` is the seasonal counterpart: it filters data to the
 /// Nov 16 – Mar 31 window and overlays each winter onto a single ~4.5-month
 /// axis so multiple winters can be compared directly.
+/// `DailyAveraging` collapses every day in the date range onto a shared
+/// 24-hour axis (midnight to midnight, Montreal local), separately for the
+/// `DayKind`s the user has toggled on (Weekday / Weekend), so the typical
+/// hourly traffic profile can be compared between week and weekend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ViewMode { Linear, YearOnYear, WinterOnWinter }
+pub enum ViewMode { Linear, YearOnYear, WinterOnWinter, DailyAveraging }
+
+/// Day-kind partition used by `ViewMode::DailyAveraging`. Both can be on at
+/// once (yielding one Weekday-average and one Weekend-average series per
+/// source/modality); when neither is on, the app exits DailyAveraging mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DayKind { Weekday, Weekend }
+
+impl DayKind {
+    pub fn label(&self, lang: Lang) -> &'static str {
+        let t = lang.t();
+        match self {
+            Self::Weekday => t.weekday,
+            Self::Weekend => t.weekend,
+        }
+    }
+}
 
 impl Resolution {
     pub fn label(&self, lang: Lang) -> &'static str {

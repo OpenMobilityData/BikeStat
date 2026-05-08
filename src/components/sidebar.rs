@@ -1,6 +1,6 @@
 use chrono::NaiveDate;
 use leptos::prelude::*;
-use crate::data::types::{DataSource, Modality, Resolution, ViewMode};
+use crate::data::types::{DataSource, DayKind, Modality, Resolution, ViewMode};
 use crate::i18n::Lang;
 
 #[component]
@@ -26,6 +26,9 @@ pub fn Sidebar(
     view_mode: ReadSignal<ViewMode>,
     on_year_on_year: Callback<()>,
     on_winter_on_winter: Callback<()>,
+
+    selected_day_kinds: ReadSignal<Vec<DayKind>>,
+    on_day_kind_toggle: Callback<DayKind>,
 ) -> impl IntoView {
     let lang = use_context::<ReadSignal<Lang>>().expect("Lang context not provided");
     view! {
@@ -128,8 +131,13 @@ pub fn Sidebar(
                     {[Resolution::Hour, Resolution::Day, Resolution::Week, Resolution::Month]
                         .into_iter().map(|r| {
                         let on_resolution = on_resolution.clone();
+                        // Daily Averaging is intrinsically hourly — lock the
+                        // selector to Hour while it's active so the buttons'
+                        // disabled state mirrors the chart behavior.
+                        let is_daily_avg = move || view_mode.get() == ViewMode::DailyAveraging;
                         view! {
                             <button
+                                disabled=is_daily_avg
                                 class=move || if resolution.get() == r { "active" } else { "" }
                                 on:click=move |_| on_resolution.run(r)>
                                 {move || r.label(lang.get())}
@@ -183,6 +191,24 @@ pub fn Sidebar(
                         on:click=move |_| on_winter_on_winter.run(())>
                         {move || lang.get().t().winter_on_winter}
                     </button>
+                </div>
+            </div>
+
+            // ── Daily Averaging ──
+            <div class="control-group">
+                <label class="section-label">{move || lang.get().t().daily_averaging}</label>
+                <div class="btn-group">
+                    {[DayKind::Weekday, DayKind::Weekend].into_iter().map(|k| {
+                        let on_day_kind_toggle = on_day_kind_toggle.clone();
+                        view! {
+                            <button
+                                class=move || if selected_day_kinds.get().contains(&k)
+                                    { "active" } else { "" }
+                                on:click=move |_| on_day_kind_toggle.run(k)>
+                                {move || k.label(lang.get())}
+                            </button>
+                        }
+                    }).collect_view()}
                 </div>
             </div>
 

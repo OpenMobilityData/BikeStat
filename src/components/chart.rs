@@ -3,7 +3,7 @@ use chrono_tz::America::Montreal as MontrealTz;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
-use crate::data::types::Resolution;
+use crate::data::types::{Resolution, ViewMode};
 use crate::i18n::Lang;
 
 #[derive(Clone, PartialEq)]
@@ -125,8 +125,13 @@ struct HoverRow {
 /// Format the tooltip's lead-in date. For Hour resolution, surface the
 /// Montreal local time (so tooltips read like commute times instead of
 /// UTC offsets). For coarser resolutions, drop the time entirely — the
-/// bucket's hour is just an artifact of UTC-midnight bucketing.
-fn format_hover_date(ts: DateTime<Utc>, res: Resolution) -> String {
+/// bucket's hour is just an artifact of UTC-midnight bucketing. In
+/// DailyAveraging mode the date is meaningless (every series is folded
+/// onto a single 24-hour axis), so show only the hour-of-day.
+fn format_hover_date(ts: DateTime<Utc>, res: Resolution, mode: ViewMode) -> String {
+    if mode == ViewMode::DailyAveraging {
+        return ts.format("%H:%M").to_string();
+    }
     match res {
         Resolution::Hour => ts.with_timezone(&MontrealTz)
             .format("%Y-%m-%d %H:%M %Z").to_string(),
@@ -157,6 +162,9 @@ pub fn Chart(
     x_range: ReadSignal<Option<(DateTime<Utc>, DateTime<Utc>)>>,
     /// Current bucket resolution; used to format the tooltip date.
     resolution: ReadSignal<Resolution>,
+    /// Current view mode; used by DailyAveraging to switch the x-axis tick
+    /// and tooltip date formats from "Mon DD" / date-time to "HH:MM".
+    view_mode: ReadSignal<ViewMode>,
 ) -> impl IntoView {
     let lang = use_context::<ReadSignal<Lang>>().expect("Lang context not provided");
     let view_box = "0 0 900 400";
@@ -180,6 +188,7 @@ pub fn Chart(
         let s = series.get();
         let xr = x_range.get();
         let res = resolution.get();
+        let mode = view_mode.get();
         let g = compute_geom(&s, xr, pad_l, pad_t, w, h)?;
         let y_max = g.y_min + g.y_span;
         let base_y = g.to_y(g.y_min);
@@ -241,7 +250,20 @@ pub fn Chart(
         // X-axis ticks (up to 8)
         let max_points = s.iter().map(|ser| ser.points.len()).max().unwrap_or(0);
         let x_tick_n = 7.min(max_points.max(if xr.is_some() { 7 } else { 0 }));
-        let x_ticks: Vec<(f64, String)> = if x_tick_n == 0 { vec![] } else {
+        let x_ticks: Vec<(f64, String)> = if mode == ViewMode::DailyAveraging {
+            // 4-hour ticks at 00, 04, 08, 12, 16, 20, 24 — laid out by raw
+            // fraction of the plot width so the labels land on round hours
+            // regardless of the underlying timestamp arithmetic. The right
+            // edge is the next day's midnight; render it as "24:00" for an
+            // unambiguous wrap rather than chrono's "00:00".
+            (0..=6).map(|i| {
+                let h = i * 4;
+                let x = g.pad_l + (h as f64 / 24.0) * g.w;
+                (x, format!("{:02}:00", h))
+            }).collect()
+        } else if x_tick_n == 0 {
+            vec![]
+        } else {
             (0..=x_tick_n).map(|i| {
                 let ts = (g.x_min + g.x_span * i as f64 / x_tick_n as f64) as i64;
                 let x = g.to_x(ts);
@@ -447,8 +469,9 @@ pub fn Chart(
             // ── Hover tooltip (HTML, position: fixed to avoid clipping) ──
             {move || hover.get().map(|hi| {
                 let res = resolution.get();
+                let mode = view_mode.get();
                 let date = hi.rows.first()
-                    .map(|r| format_hover_date(r.timestamp, res))
+                    .map(|r| format_hover_date(r.timestamp, res, mode))
                     .unwrap_or_default();
                 // CSS transform flips the tooltip's anchor across the cursor
                 // when we're too close to a viewport edge to fit on the
