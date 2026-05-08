@@ -245,11 +245,18 @@ fn App() -> impl IntoView {
 
     let on_date_preset = Callback::new(
         move |(from, to, force_res): (NaiveDate, NaiveDate, Option<Resolution>)| {
-            set_view_mode.set(ViewMode::Linear);
-            set_selected_day_kinds.set(vec![]);
+            // Preserve DailyAveraging across date-range changes — the user
+            // may want to compare weekday/weekend profiles over different
+            // windows without re-toggling the kind buttons each time. Only
+            // YearOnYear / WinterOnWinter (handled below) and the explicit
+            // kind-button clicks switch DailyAveraging off.
+            let in_daily_avg = view_mode.get_untracked() == ViewMode::DailyAveraging;
+            if !in_daily_avg {
+                set_view_mode.set(ViewMode::Linear);
+                if let Some(r) = force_res { set_resolution.set(r); }
+            }
             set_date_from.set(from);
             set_date_to.set(to);
-            if let Some(r) = force_res { set_resolution.set(r); }
         },
     );
 
