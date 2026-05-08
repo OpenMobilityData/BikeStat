@@ -233,6 +233,36 @@ main {
     min-height: 0;
 }
 
+/* Discrete export buttons anchored in the top-right of the chart area:
+   download-as-PNG (camera) and copy-to-clipboard. Transparent background
+   so the buttons sit unobtrusively on top of the plot, muted icon color
+   until hovered. */
+.chart-export-group {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    z-index: 5;
+    display: flex;
+    gap: 4px;
+}
+.chart-export {
+    width: 26px;
+    height: 26px;
+    padding: 3px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.chart-export:hover { color: var(--text); border-color: var(--text-muted); }
+.chart-export svg { width: 18px; height: 18px; display: block; }
+/* Brief success flash on the clipboard button after a write resolves. */
+.chart-export.flash { color: var(--highlight); border-color: var(--highlight); }
+
 .chart-legend {
     display: flex;
     flex-wrap: wrap;
@@ -370,6 +400,7 @@ main {
 /* SVG chart elements */
 .chart-axis line, .chart-axis path { stroke: var(--border); }
 .chart-axis text { fill: var(--text-muted); font-size: 11px; }
+.chart-axis-title { fill: var(--text); font-size: 11px; opacity: 0.85; }
 .chart-grid line { stroke: var(--border); stroke-dasharray: 3 4; }
 .chart-line { fill: none; stroke-width: 2; }
 .chart-area { opacity: 0.15; }

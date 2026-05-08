@@ -111,6 +111,11 @@ pub struct T {
     pub loading_stations: &'static str,
     pub click_marker: &'static str,
     pub select_locations: &'static str,
+
+    // Chart export
+    pub download_chart_png: &'static str,
+    pub copy_chart_to_clipboard: &'static str,
+    pub copied_to_clipboard: &'static str,
 }
 
 pub const EN: T = T {
@@ -164,6 +169,10 @@ pub const EN: T = T {
     loading_stations: "Loading stations…",
     click_marker: "Click a marker to select / deselect",
     select_locations: "Please select one or more locations to view counts",
+
+    download_chart_png: "Download chart as PNG",
+    copy_chart_to_clipboard: "Copy chart to clipboard",
+    copied_to_clipboard: "Copied!",
 };
 
 pub const FR: T = T {
@@ -217,4 +226,8 @@ pub const FR: T = T {
     loading_stations: "Chargement des emplacements…",
     click_marker: "Cliquez sur un marqueur pour sélectionner / désélectionner",
     select_locations: "Veuillez sélectionner un ou plusieurs emplacements pour afficher les comptages",
+
+    download_chart_png: "Télécharger le graphique en PNG",
+    copy_chart_to_clipboard: "Copier le graphique dans le presse-papiers",
+    copied_to_clipboard: "Copié !",
 };
