@@ -823,8 +823,9 @@ fn replace_msg(signal: &WriteSignal<Vec<String>>, old: &str, new: &str) {
 ///
 /// Order:
 ///   1. "All dates" — the full data extent.
-///   2. Relative — Last Week / Month / 3 Months / 6 Months, anchored at the
-///      latest record. Skipped if the resulting start would precede the data.
+///   2. Relative — Last 48H / Week / Month / 3 Months / 6 Months / Year,
+///      anchored at the latest record. Skipped if the resulting start would
+///      precede the data.
 ///   3. Calendar years — one per year touched by the data window
 ///      (nominal Jan 1 → Dec 31; chart filtering handles partial coverage).
 ///   4. Seasonal — Summer (Apr 1 → Nov 15) and Winter (Nov 16 → Mar 31 of
@@ -846,7 +847,11 @@ fn compute_date_presets(
     out.push(entry(t.all_dates, data_from, data_to));
 
     // ── Relative presets, anchored at the latest record ──
-    let relatives: [(&str, Option<NaiveDate>); 5] = [
+    // "Last 48H" subtracts a single day so the inclusive [from 00:00, to 23:59]
+    // window spans 48 hours of data. Disabled at Week / Month resolutions by
+    // the sidebar's days < min_days check.
+    let relatives: [(&str, Option<NaiveDate>); 6] = [
+        (t.last_48h,      Some(data_to - Duration::days(1))),
         (t.last_week,     Some(data_to - Duration::days(7))),
         (t.last_month,    data_to.checked_sub_months(Months::new(1))),
         (t.last_3_months, data_to.checked_sub_months(Months::new(3))),

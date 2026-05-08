@@ -92,6 +92,7 @@ pub struct T {
 
     // Date presets (some get formatted with a year)
     pub all_dates: &'static str,
+    pub last_48h: &'static str,
     pub last_week: &'static str,
     pub last_month: &'static str,
     pub last_3_months: &'static str,
@@ -139,6 +140,7 @@ pub const EN: T = T {
     month: "Month",
 
     all_dates: "All dates",
+    last_48h: "Last 48H",
     last_week: "Last Week",
     last_month: "Last Month",
     last_3_months: "Last 3 Months",
@@ -185,6 +187,7 @@ pub const FR: T = T {
     month: "Mois",
 
     all_dates: "Toutes les dates",
+    last_48h: "Dernières 48 h",
     last_week: "Semaine dernière",
     last_month: "Mois dernier",
     last_3_months: "3 derniers mois",
