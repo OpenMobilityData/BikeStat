@@ -226,7 +226,7 @@ fn App() -> impl IntoView {
     // Includes "All dates", relative ranges (Last Week … Last 6 Months),
     // calendar years, and seasonal Summer/Winter ranges that overlap the data.
     let (date_presets, set_date_presets) =
-        signal::<Vec<(String, NaiveDate, NaiveDate, i64)>>(vec![]);
+        signal::<Vec<(String, NaiveDate, NaiveDate, i64, Option<Resolution>)>>(vec![]);
     Effect::new(move |_| {
         let recs = records.get();
         let first = recs.iter().map(|r| r.timestamp.date_naive()).min();
@@ -238,11 +238,14 @@ fn App() -> impl IntoView {
         set_date_presets.set(presets);
     });
 
-    let on_date_preset = Callback::new(move |(from, to): (NaiveDate, NaiveDate)| {
-        set_view_mode.set(ViewMode::Linear);
-        set_date_from.set(from);
-        set_date_to.set(to);
-    });
+    let on_date_preset = Callback::new(
+        move |(from, to, force_res): (NaiveDate, NaiveDate, Option<Resolution>)| {
+            set_view_mode.set(ViewMode::Linear);
+            set_date_from.set(from);
+            set_date_to.set(to);
+            if let Some(r) = force_res { set_resolution.set(r); }
+        },
+    );
 
     // Year-on-Year: anchor a 12-month axis at the earliest record matching
     // the current selection, fold all later years onto that axis, and color
@@ -834,34 +837,36 @@ fn compute_date_presets(
     data_from: NaiveDate,
     data_to:   NaiveDate,
     lang:      Lang,
-) -> Vec<(String, NaiveDate, NaiveDate, i64)> {
+) -> Vec<(String, NaiveDate, NaiveDate, i64, Option<Resolution>)> {
     let t = lang.t();
 
-    let entry = |label: &str, f: NaiveDate, tdate: NaiveDate| {
-        (label.to_string(), f, tdate, (tdate - f).num_days())
+    let entry = |label: &str, f: NaiveDate, tdate: NaiveDate, force_res: Option<Resolution>| {
+        (label.to_string(), f, tdate, (tdate - f).num_days(), force_res)
     };
 
     let mut out = Vec::new();
 
     // ── All dates ──
-    out.push(entry(t.all_dates, data_from, data_to));
+    out.push(entry(t.all_dates, data_from, data_to, None));
 
     // ── Relative presets, anchored at the latest record ──
     // "Last 48H" subtracts a single day so the inclusive [from 00:00, to 23:59]
-    // window spans 48 hours of data. Disabled at Week / Month resolutions by
-    // the sidebar's days < min_days check.
-    let relatives: [(&str, Option<NaiveDate>); 6] = [
-        (t.last_48h,      Some(data_to - Duration::days(1))),
-        (t.last_week,     Some(data_to - Duration::days(7))),
-        (t.last_month,    data_to.checked_sub_months(Months::new(1))),
-        (t.last_3_months, data_to.checked_sub_months(Months::new(3))),
-        (t.last_6_months, data_to.checked_sub_months(Months::new(6))),
-        (t.last_year,     data_to.checked_sub_months(Months::new(12)).map(|d| d + Duration::days(1))),
+    // window spans 48 hours of data, and forces Hour resolution since a daily
+    // bar chart of two days is rarely what the user wants. Disabled at Week /
+    // Month resolutions by the sidebar's days < min_days check.
+    let relatives: [(&str, Option<NaiveDate>, Option<Resolution>); 6] = [
+        (t.last_48h,      Some(data_to - Duration::days(1)),                         Some(Resolution::Hour)),
+        (t.last_week,     Some(data_to - Duration::days(7)),                         None),
+        (t.last_month,    data_to.checked_sub_months(Months::new(1)),                None),
+        (t.last_3_months, data_to.checked_sub_months(Months::new(3)),                None),
+        (t.last_6_months, data_to.checked_sub_months(Months::new(6)),                None),
+        (t.last_year,     data_to.checked_sub_months(Months::new(12))
+                                  .map(|d| d + Duration::days(1)),                   None),
     ];
-    for (label, from_opt) in relatives {
+    for (label, from_opt, force_res) in relatives {
         if let Some(from_dt) = from_opt {
             if from_dt >= data_from {
-                out.push(entry(label, from_dt, data_to));
+                out.push(entry(label, from_dt, data_to, force_res));
             }
         }
     }
@@ -873,7 +878,7 @@ fn compute_date_presets(
             NaiveDate::from_ymd_opt(y, 12, 31),
         ) {
             if y_end >= data_from && y_start <= data_to {
-                out.push(entry(&y.to_string(), y_start, y_end));
+                out.push(entry(&y.to_string(), y_start, y_end, None));
             }
         }
     }
@@ -886,7 +891,7 @@ fn compute_date_presets(
             NaiveDate::from_ymd_opt(y, 11, 15),
         ) {
             if st >= data_from && sf <= data_to {
-                seasons.push(entry(&format!("{} {}", t.summer, y), sf, st));
+                seasons.push(entry(&format!("{} {}", t.summer, y), sf, st, None));
             }
         }
         if let (Some(wf), Some(wt)) = (
@@ -894,7 +899,7 @@ fn compute_date_presets(
             NaiveDate::from_ymd_opt(y + 1, 3,  31),
         ) {
             if wt >= data_from && wf <= data_to {
-                seasons.push(entry(&format!("{} {}/{}", t.winter, y, y + 1), wf, wt));
+                seasons.push(entry(&format!("{} {}/{}", t.winter, y, y + 1), wf, wt, None));
             }
         }
     }

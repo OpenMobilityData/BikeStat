@@ -20,8 +20,8 @@ pub fn Sidebar(
     on_date_from: Callback<NaiveDate>,
     on_date_to: Callback<NaiveDate>,
 
-    date_presets: ReadSignal<Vec<(String, NaiveDate, NaiveDate, i64)>>,
-    on_date_preset: Callback<(NaiveDate, NaiveDate)>,
+    date_presets: ReadSignal<Vec<(String, NaiveDate, NaiveDate, i64, Option<Resolution>)>>,
+    on_date_preset: Callback<(NaiveDate, NaiveDate, Option<Resolution>)>,
 
     view_mode: ReadSignal<ViewMode>,
     on_year_on_year: Callback<()>,
@@ -155,7 +155,7 @@ pub fn Sidebar(
                             Resolution::Month => 60,
                         };
                         let res_label = res.label(l).to_lowercase();
-                        date_presets.get().into_iter().map(|(label, from, to, days)| {
+                        date_presets.get().into_iter().map(|(label, from, to, days, force_res)| {
                             let on_date_preset = on_date_preset.clone();
                             let disabled = days < min_days;
                             let title = if disabled {
@@ -167,7 +167,7 @@ pub fn Sidebar(
                                 <button
                                     disabled=disabled
                                     title=title
-                                    on:click=move |_| on_date_preset.run((from, to))>
+                                    on:click=move |_| on_date_preset.run((from, to, force_res))>
                                     {label}
                                 </button>
                             }
