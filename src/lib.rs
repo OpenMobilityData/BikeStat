@@ -733,6 +733,29 @@ fn App() -> impl IntoView {
                 </span>
                 <span class="data-status">
                     {move || {
+                        let t = lang.get().t();
+                        // "TB" mirrors the street_abbrev convention used by
+                        // the Telraam chips; hardcoded since CDN-NDG only has
+                        // the one Terrebonne segment so far.
+                        let display = format!("{} TB: {}",
+                            t.cdn_ndg_data_prefix, CDN_NDG_DATA_THROUGH);
+                        let tooltip = format!(
+                            "{}: {}\n  {}: {}\n  {}: {}",
+                            t.cdn_ndg_data_prefix, CDN_NDG_SEGMENT_NAME,
+                            t.received,     CDN_NDG_RECEIVED,
+                            t.data_through, CDN_NDG_DATA_THROUGH,
+                        );
+                        view! {
+                            <a class="cdn-ndg-link" title=tooltip
+                               href=CDN_NDG_DATA_URL
+                               target="_blank" rel="noopener noreferrer">
+                                {display}
+                            </a>
+                        }
+                    }}
+                </span>
+                <span class="data-status">
+                    {move || {
                         let segs = telraam_freshness();
                         if segs.is_empty() { return None; }
                         let t = lang.get().t();
@@ -860,6 +883,21 @@ struct TelraamSegStatus {
 /// from the VdM freshness chip as attribution and a path back to the raw
 /// CSV / metadata.
 const VDM_DATASET_URL: &str = "https://donnees.montreal.ca/dataset/cyclistes";
+
+/// CDN-NDG borough eco-counter freshness metadata.
+///
+/// Unlike VdM and Telraam, this dataset arrives quarterly via access-to-
+/// information requests, so there is no live freshness signal to surface
+/// — the chip is a static stamp of when the data was received and how
+/// far it covers. Update these constants whenever a new batch is added
+/// to `static/data/cdn-ndg/`.
+const CDN_NDG_RECEIVED:     &str = "2025-12-19";
+const CDN_NDG_DATA_THROUGH: &str = "2025-11-15";
+const CDN_NDG_SEGMENT_NAME: &str = "Terrebonne @ Kensington";
+/// GitHub directory listing the source Excel files served from
+/// `static/data/cdn-ndg/terrebonne-kensington/`.
+const CDN_NDG_DATA_URL: &str =
+    "https://github.com/OpenMobilityData/BikeStat/tree/main/static/data/cdn-ndg/terrebonne-kensington";
 
 /// Build a `https://telraam.net/en/location/<api_id>/<from>/<to>` URL for a
 /// 7-day window ending yesterday — matches the format Telraam's own date

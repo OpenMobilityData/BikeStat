@@ -84,12 +84,14 @@ header .telraam-seg.stale { color: var(--warning, #f5a623); }
    ambient colour so an empty hover state matches the static text styling,
    and only reveal the link affordance on hover. */
 header .vdm-link,
-header .telraam-seg {
+header .telraam-seg,
+header .cdn-ndg-link {
     color: inherit;
     text-decoration: none;
 }
 header .vdm-link:hover,
-header .telraam-seg:hover { text-decoration: underline; }
+header .telraam-seg:hover,
+header .cdn-ndg-link:hover { text-decoration: underline; }
 
 /* ── Sidebar ── */
 aside {
