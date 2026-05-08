@@ -716,7 +716,12 @@ fn App() -> impl IntoView {
                         if sidebar_open.get() { t.mobile_close } else { t.mobile_filters }
                     }}
                 </button>
-                <h1>"BikeStat"</h1>
+                <h1>
+                    <a href="https://github.com/OpenMobilityData/BikeStat"
+                       target="_blank" rel="noopener noreferrer">
+                        "BikeStat"
+                    </a>
+                </h1>
                 <span class="subtitle">{move || lang.get().t().subtitle}</span>
                 <span class="load-status">{status_text}</span>
                 <span class="data-status">

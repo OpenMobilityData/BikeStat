@@ -48,6 +48,15 @@ header h1 {
     letter-spacing: 0.02em;
 }
 
+/* The h1 wraps a link to the GitHub repo; keep the red headline look and
+   only reveal underline on hover, mirroring the .vdm-link / .telraam-seg
+   pattern used elsewhere in the header. */
+header h1 a {
+    color: inherit;
+    text-decoration: none;
+}
+header h1 a:hover { text-decoration: underline; }
+
 header .subtitle {
     color: var(--text-muted);
     font-size: 0.8rem;
