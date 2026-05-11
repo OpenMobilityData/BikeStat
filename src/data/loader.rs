@@ -137,7 +137,23 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
     let mut sources = Vec::with_capacity(instances.len());
     let mut records = Vec::new();
     let mut list: Vec<_> = instances.into_iter().collect();
-    list.sort_by(|a, b| a.0.cmp(&b.0));
+    // Order intersections by their position in MONTREAL_LOCATION_FILTER so the
+    // sidebar follows that list.  Within an intersection, fall back to
+    // (instance_id, direction) for a stable order.  Unfiltered rows (only
+    // reachable when the filter is `None`) sort after all matched ones.
+    let filter_idx = |rue1: &str, rue2: &str| -> usize {
+        let Some(filters) = MONTREAL_LOCATION_FILTER else { return usize::MAX };
+        let r1 = rue1.to_lowercase();
+        let r2 = rue2.to_lowercase();
+        filters.iter().position(|(f1, f2)| {
+            r1.contains(&f1.to_lowercase()) && r2.contains(&f2.to_lowercase())
+        }).unwrap_or(usize::MAX)
+    };
+    list.sort_by(|a, b| {
+        let ai = filter_idx(&a.1.rue1, &a.1.rue2);
+        let bi = filter_idx(&b.1.rue1, &b.1.rue2);
+        ai.cmp(&bi).then_with(|| a.0.cmp(&b.0))
+    });
 
     // Track per-source metadata needed to build intersection totals afterwards.
     // Each entry: (source_id, rue1, rue2, lat, lon)

@@ -15,10 +15,15 @@ pub const MONTREAL_CYCLISTES_URL: &str = "data/cyclistes.csv";
 /// Whitelist of Montreal locations to include, matched case-insensitively as
 /// substrings against (rue_1, rue_2).  `None` = include all locations.
 ///
+/// The order of entries here also drives the sidebar order of the matched VdM
+/// intersections.  Each intersection's directional rows and synthesised Total
+/// stay clustered together; intersections that don't match any entry (only
+/// possible when this filter is `None`) fall back to alphabetical order.
+///
 /// "carie" matches "Décarie" without requiring exact accent handling.
 pub const MONTREAL_LOCATION_FILTER: Option<&[(&str, &str)]> = Some(&[
-    ("Bourret",  "carie"),       // Bourret @ Décarie (any direction)
     ("Girouard", "Terrebonne"),
+    ("Bourret",  "carie"),       // Bourret @ Décarie (any direction)
 ]);
 
 /// Color palette cycled through when assigning colors to discovered sources.
