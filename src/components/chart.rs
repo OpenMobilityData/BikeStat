@@ -567,6 +567,12 @@ pub fn Chart(
         let anchor_ts = anchor_ts?;
         let anchor_secs = anchor_ts.timestamp() as f64;
 
+        // Coverage tolerance: one bucket. A series whose nearest point lies
+        // farther than this from the anchor has no data at the hovered time
+        // and must be dropped from the tooltip — otherwise we'd show a value
+        // from months away as if it applied to the cursor's timestamp.
+        let coverage_tol = (gap_threshold_secs(resolution.get()) / 2) as f64;
+
         // Per-series readout: look up the value at the anchor timestamp by
         // nearest-in-time.  Series share the same Resolution grid, so this
         // typically hits the same timestamp exactly.
@@ -577,6 +583,9 @@ pub fn Chart(
                 let db = (b.0.timestamp() as f64 - anchor_secs).abs();
                 da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
             })?;
+            if (nearest.0.timestamp() as f64 - anchor_secs).abs() >= coverage_tol {
+                return None;
+            }
             Some(HoverRow {
                 color: ser.color.clone(),
                 label: ser.label.clone(),
