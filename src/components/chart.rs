@@ -705,7 +705,12 @@ pub fn Chart(
 
             // ── Chart SVG ──
             {move || match derived() {
-                None => view! { <div class="placeholder">{move || lang.get().t().select_locations}</div> }.into_any(),
+                None => view! {
+                    <div class="placeholder">
+                        <span class="show-desktop">{move || lang.get().t().select_locations_desktop}</span>
+                        <span class="show-mobile">{move || lang.get().t().select_locations_mobile}</span>
+                    </div>
+                }.into_any(),
                 Some((paths, y_ticks, x_ticks)) => view! {
                     <svg class="chart-plot" viewBox=view_box preserveAspectRatio="none">
                         // Grid lines
