@@ -231,20 +231,26 @@ fn App() -> impl IntoView {
     // Includes "All dates", relative ranges (Last Week … Last 6 Months),
     // calendar years, and seasonal Summer/Winter ranges that overlap the data.
     let (date_presets, set_date_presets) =
-        signal::<Vec<(String, NaiveDate, NaiveDate, i64, Option<Resolution>)>>(vec![]);
+        signal::<Vec<(String, NaiveDate, NaiveDate, i64, Option<Resolution>, Option<DateTime<Utc>>)>>(vec![]);
     Effect::new(move |_| {
         let recs = records.get();
-        let first = recs.iter().map(|r| r.timestamp.date_naive()).min();
-        let last  = recs.iter().map(|r| r.timestamp.date_naive()).max();
-        let presets = match (first, last) {
-            (Some(f), Some(l)) => compute_date_presets(f, l, lang.get()),
+        let first    = recs.iter().map(|r| r.timestamp.date_naive()).min();
+        let last_ts  = recs.iter().map(|r| r.timestamp).max();
+        let presets = match (first, last_ts) {
+            (Some(f), Some(lts)) => compute_date_presets(f, lts, lang.get()),
             _ => vec![],
         };
         set_date_presets.set(presets);
     });
 
+    // Precise lower-bound override for the chart's date filter. Set by the
+    // "Last 48H" preset to anchor the window exactly at (latest_record - 48h)
+    // instead of the start-of-date_from default. Cleared by any other preset
+    // or by manual date-picker changes.
+    let (precise_from_ts, set_precise_from_ts) = signal::<Option<DateTime<Utc>>>(None);
+
     let on_date_preset = Callback::new(
-        move |(from, to, force_res): (NaiveDate, NaiveDate, Option<Resolution>)| {
+        move |(from, to, force_res, precise_from): (NaiveDate, NaiveDate, Option<Resolution>, Option<DateTime<Utc>>)| {
             // Preserve DailyAveraging across date-range changes — the user
             // may want to compare weekday/weekend profiles over different
             // windows without re-toggling the kind buttons each time. Only
@@ -257,6 +263,7 @@ fn App() -> impl IntoView {
             }
             set_date_from.set(from);
             set_date_to.set(to);
+            set_precise_from_ts.set(precise_from);
         },
     );
 
@@ -299,6 +306,7 @@ fn App() -> impl IntoView {
         let end_d = start_d.checked_add_months(Months::new(12)).unwrap_or(start_d);
         set_date_from.set(start_d);
         set_date_to.set(end_d);
+        set_precise_from_ts.set(None);
         set_selected_day_kinds.set(vec![]);
         set_view_mode.set(ViewMode::YearOnYear);
     });
@@ -324,6 +332,7 @@ fn App() -> impl IntoView {
             .expect("Mar 31 is always a valid date");
         set_date_from.set(from_d);
         set_date_to.set(to_d);
+        set_precise_from_ts.set(None);
         set_selected_day_kinds.set(vec![]);
         set_view_mode.set(ViewMode::WinterOnWinter);
     });
@@ -341,8 +350,9 @@ fn App() -> impl IntoView {
         let day_kinds = selected_day_kinds.get();
         let l         = lang.get();
 
-        let from_dt = from_d.and_hms_opt(0, 0, 0)
-            .map(|ndt| Utc.from_utc_datetime(&ndt));
+        let from_dt = precise_from_ts.get().or_else(|| {
+            from_d.and_hms_opt(0, 0, 0).map(|ndt| Utc.from_utc_datetime(&ndt))
+        });
         let to_dt = to_d.and_hms_opt(23, 59, 59)
             .map(|ndt| Utc.from_utc_datetime(&ndt));
 
@@ -824,8 +834,8 @@ fn App() -> impl IntoView {
 
                 date_from=date_from
                 date_to=date_to
-                on_date_from=Callback::new(move |d| set_date_from.set(d))
-                on_date_to=Callback::new(move |d| set_date_to.set(d))
+                on_date_from=Callback::new(move |d| { set_precise_from_ts.set(None); set_date_from.set(d); })
+                on_date_to=Callback::new(move |d| { set_precise_from_ts.set(None); set_date_to.set(d); })
 
                 date_presets=date_presets
                 on_date_preset=on_date_preset
@@ -1002,38 +1012,43 @@ fn replace_msg(signal: &WriteSignal<Vec<String>>, old: &str, new: &str) {
 ///      the following year) entries that overlap the data, sorted by start.
 fn compute_date_presets(
     data_from: NaiveDate,
-    data_to:   NaiveDate,
+    latest_ts: DateTime<Utc>,
     lang:      Lang,
-) -> Vec<(String, NaiveDate, NaiveDate, i64, Option<Resolution>)> {
+) -> Vec<(String, NaiveDate, NaiveDate, i64, Option<Resolution>, Option<DateTime<Utc>>)> {
     let t = lang.t();
+    let data_to = latest_ts.date_naive();
 
-    let entry = |label: &str, f: NaiveDate, tdate: NaiveDate, force_res: Option<Resolution>| {
-        (label.to_string(), f, tdate, (tdate - f).num_days(), force_res)
+    let entry = |label: &str, f: NaiveDate, tdate: NaiveDate, force_res: Option<Resolution>, precise_from: Option<DateTime<Utc>>| {
+        (label.to_string(), f, tdate, (tdate - f).num_days(), force_res, precise_from)
     };
 
     let mut out = Vec::new();
 
     // ── All dates ──
-    out.push(entry(t.all_dates, data_from, data_to, None));
+    out.push(entry(t.all_dates, data_from, data_to, None, None));
 
     // ── Relative presets, anchored at the latest record ──
-    // "Last 48H" subtracts a single day so the inclusive [from 00:00, to 23:59]
-    // window spans 48 hours of data, and forces Hour resolution since a daily
-    // bar chart of two days is rarely what the user wants. Disabled at Week /
-    // Month resolutions by the sidebar's days < min_days check.
-    let relatives: [(&str, Option<NaiveDate>, Option<Resolution>); 6] = [
-        (t.last_48h,      Some(data_to - Duration::days(1)),                         Some(Resolution::Hour)),
-        (t.last_week,     Some(data_to - Duration::days(7)),                         None),
-        (t.last_month,    data_to.checked_sub_months(Months::new(1)),                None),
-        (t.last_3_months, data_to.checked_sub_months(Months::new(3)),                None),
-        (t.last_6_months, data_to.checked_sub_months(Months::new(6)),                None),
+    // "Last 48H" uses a precise 48-hour window anchored at the latest record's
+    // actual timestamp — Hour buckets are atomic so there's no need to align
+    // to date boundaries. The from/to dates exist only for the date-picker
+    // display; the filter's lower bound comes from the precise_from field.
+    // Forces Hour resolution since a daily bar chart of two days is rarely
+    // what the user wants. Disabled at Week / Month resolutions by the
+    // sidebar's days < min_days check.
+    let last_48h_precise = latest_ts - Duration::hours(48);
+    let relatives: [(&str, Option<NaiveDate>, Option<Resolution>, Option<DateTime<Utc>>); 6] = [
+        (t.last_48h,      Some(last_48h_precise.date_naive()),                       Some(Resolution::Hour), Some(last_48h_precise)),
+        (t.last_week,     Some(data_to - Duration::days(7)),                         None, None),
+        (t.last_month,    data_to.checked_sub_months(Months::new(1)),                None, None),
+        (t.last_3_months, data_to.checked_sub_months(Months::new(3)),                None, None),
+        (t.last_6_months, data_to.checked_sub_months(Months::new(6)),                None, None),
         (t.last_year,     data_to.checked_sub_months(Months::new(12))
-                                  .map(|d| d + Duration::days(1)),                   None),
+                                  .map(|d| d + Duration::days(1)),                   None, None),
     ];
-    for (label, from_opt, force_res) in relatives {
+    for (label, from_opt, force_res, precise_from) in relatives {
         if let Some(from_dt) = from_opt {
             if from_dt >= data_from {
-                out.push(entry(label, from_dt, data_to, force_res));
+                out.push(entry(label, from_dt, data_to, force_res, precise_from));
             }
         }
     }
@@ -1045,7 +1060,7 @@ fn compute_date_presets(
             NaiveDate::from_ymd_opt(y, 12, 31),
         ) {
             if y_end >= data_from && y_start <= data_to {
-                out.push(entry(&y.to_string(), y_start, y_end, None));
+                out.push(entry(&y.to_string(), y_start, y_end, None, None));
             }
         }
     }
@@ -1058,7 +1073,7 @@ fn compute_date_presets(
             NaiveDate::from_ymd_opt(y, 11, 15),
         ) {
             if st >= data_from && sf <= data_to {
-                seasons.push(entry(&format!("{} {}", t.summer, y), sf, st, None));
+                seasons.push(entry(&format!("{} {}", t.summer, y), sf, st, None, None));
             }
         }
         if let (Some(wf), Some(wt)) = (
@@ -1066,7 +1081,7 @@ fn compute_date_presets(
             NaiveDate::from_ymd_opt(y + 1, 3,  31),
         ) {
             if wt >= data_from && wf <= data_to {
-                seasons.push(entry(&format!("{} {}/{}", t.winter, y, y + 1), wf, wt, None));
+                seasons.push(entry(&format!("{} {}/{}", t.winter, y, y + 1), wf, wt, None, None));
             }
         }
     }

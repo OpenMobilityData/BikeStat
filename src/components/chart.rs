@@ -511,11 +511,20 @@ pub fn Chart(
         } else if x_tick_n == 0 {
             vec![]
         } else {
+            // At Hour resolution the time-of-day is what the user is reading,
+            // so include HH:MM and switch to Montreal local time (matching the
+            // tooltip's Hour-resolution convention). Coarser resolutions stay
+            // as plain dates.
+            let res = resolution.get();
             (0..=x_tick_n).map(|i| {
                 let ts = (g.x_min + g.x_span * i as f64 / x_tick_n as f64) as i64;
                 let x = g.to_x(ts);
                 let label = DateTime::from_timestamp(ts, 0)
-                    .map(|dt: DateTime<Utc>| dt.format("%b %d").to_string())
+                    .map(|dt: DateTime<Utc>| match res {
+                        Resolution::Hour => dt.with_timezone(&MontrealTz)
+                            .format("%b %-d %H:%M").to_string(),
+                        _ => dt.format("%b %d").to_string(),
+                    })
                     .unwrap_or_default();
                 (x, label)
             }).collect()

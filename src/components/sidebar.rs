@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use leptos::prelude::*;
 use crate::data::types::{DataSource, DayKind, Modality, Resolution, ViewMode};
 use crate::i18n::Lang;
@@ -20,8 +20,8 @@ pub fn Sidebar(
     on_date_from: Callback<NaiveDate>,
     on_date_to: Callback<NaiveDate>,
 
-    date_presets: ReadSignal<Vec<(String, NaiveDate, NaiveDate, i64, Option<Resolution>)>>,
-    on_date_preset: Callback<(NaiveDate, NaiveDate, Option<Resolution>)>,
+    date_presets: ReadSignal<Vec<(String, NaiveDate, NaiveDate, i64, Option<Resolution>, Option<DateTime<Utc>>)>>,
+    on_date_preset: Callback<(NaiveDate, NaiveDate, Option<Resolution>, Option<DateTime<Utc>>)>,
 
     view_mode: ReadSignal<ViewMode>,
     on_year_on_year: Callback<()>,
@@ -163,7 +163,7 @@ pub fn Sidebar(
                             Resolution::Month => 60,
                         };
                         let res_label = res.label(l).to_lowercase();
-                        date_presets.get().into_iter().map(|(label, from, to, days, force_res)| {
+                        date_presets.get().into_iter().map(|(label, from, to, days, force_res, precise_from)| {
                             let on_date_preset = on_date_preset.clone();
                             let disabled = days < min_days;
                             let title = if disabled {
@@ -175,7 +175,7 @@ pub fn Sidebar(
                                 <button
                                     disabled=disabled
                                     title=title
-                                    on:click=move |_| on_date_preset.run((from, to, force_res))>
+                                    on:click=move |_| on_date_preset.run((from, to, force_res, precise_from))>
                                     {label}
                                 </button>
                             }
