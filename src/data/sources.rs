@@ -10,7 +10,14 @@ use crate::data::types::{DataSource, LatLon, LoaderType, Modality};
 ///   "https://donnees.montreal.ca/dataset/142ff2e9-7d0a-47d6-b4f6-dfeb97041daf/resource/a8e463ab-d334-4714-81d5-8da0310d80c0/download/cyclistes.csv" \
 ///   -o static/data/cyclistes.csv
 /// ```
+///
+/// When built with `--features unfiltered`, the loader instead pulls the
+/// full unfiltered archive from `data/cyclistes-all.csv`; populate that
+/// file locally with the same curl invocation but a different `-o` target.
+#[cfg(not(feature = "unfiltered"))]
 pub const MONTREAL_CYCLISTES_URL: &str = "data/cyclistes.csv";
+#[cfg(feature = "unfiltered")]
+pub const MONTREAL_CYCLISTES_URL: &str = "data/cyclistes-all.csv";
 
 /// Whitelist of Montreal locations to include, matched case-insensitively as
 /// substrings against (rue_1, rue_2).  `None` = include all locations.
@@ -21,10 +28,13 @@ pub const MONTREAL_CYCLISTES_URL: &str = "data/cyclistes.csv";
 /// possible when this filter is `None`) fall back to alphabetical order.
 ///
 /// "carie" matches "Décarie" without requiring exact accent handling.
+#[cfg(not(feature = "unfiltered"))]
 pub const MONTREAL_LOCATION_FILTER: Option<&[(&str, &str)]> = Some(&[
     ("Girouard", "Terrebonne"),
     ("Bourret",  "carie"),       // Bourret @ Décarie (any direction)
 ]);
+#[cfg(feature = "unfiltered")]
+pub const MONTREAL_LOCATION_FILTER: Option<&[(&str, &str)]> = None;
 
 /// Color palette cycled through when assigning colors to discovered sources.
 pub const SOURCE_COLORS: &[&str] = &[

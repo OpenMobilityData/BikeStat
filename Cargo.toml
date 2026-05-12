@@ -6,6 +6,12 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Local-only testing mode: bypass MONTREAL_LOCATION_FILTER and load the
+# full unfiltered VdM CSV from `data/cyclistes-all.csv`.  Enable with
+# `trunk serve --features unfiltered`.  Never enabled in production builds.
+unfiltered = []
+
 [dependencies]
 leptos = { version = "0.7", features = ["csr"] }
 leptos_meta = { version = "0.7" }

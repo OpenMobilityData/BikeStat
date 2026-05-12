@@ -81,6 +81,24 @@ the Telraam API JSON snapshots are populated only on the production
 server, so those feeds show as unavailable in dev unless a copy is
 dropped in by hand for testing.
 
+### Unfiltered VdM mode (local testing only)
+
+To exercise the loader against every Montreal cyclistes detector
+instead of the catalogued shortlist, build with the `unfiltered` Cargo
+feature. The loader then reads `static/data/cyclistes-all.csv` and
+disables `MONTREAL_LOCATION_FILTER`:
+
+```
+curl -fsSL -A "Mozilla/5.0" \
+  "https://donnees.montreal.ca/dataset/142ff2e9-7d0a-47d6-b4f6-dfeb97041daf/resource/a8e463ab-d334-4714-81d5-8da0310d80c0/download/cyclistes.csv" \
+  -o static/data/cyclistes-all.csv
+trunk serve --features unfiltered
+```
+
+The file is ~190 MB / 1.47M rows; expect a multi-second parse on load
+and a dense sidebar/legend. Production builds never enable this
+feature, so the code path is compiled out of the deployed wasm.
+
 ## Deployment
 
 ```
