@@ -244,9 +244,9 @@ fn App() -> impl IntoView {
     });
 
     // Precise lower-bound override for the chart's date filter. Set by the
-    // "Last 48H" preset to anchor the window exactly at (latest_record - 48h)
-    // instead of the start-of-date_from default. Cleared by any other preset
-    // or by manual date-picker changes.
+    // "Last 24H" / "Last 48H" presets to anchor the window exactly at
+    // (latest_record - 24h / 48h) instead of the start-of-date_from default.
+    // Cleared by any other preset or by manual date-picker changes.
     let (precise_from_ts, set_precise_from_ts) = signal::<Option<DateTime<Utc>>>(None);
 
     let on_date_preset = Callback::new(
@@ -1003,7 +1003,7 @@ fn replace_msg(signal: &WriteSignal<Vec<String>>, old: &str, new: &str) {
 ///
 /// Order:
 ///   1. "All dates" — the full data extent.
-///   2. Relative — Last 48H / Week / Month / 3 Months / 6 Months / Year,
+///   2. Relative — Last 24H / 48H / Week / Month / 3 Months / 6 Months / Year,
 ///      anchored at the latest record. Skipped if the resulting start would
 ///      precede the data.
 ///   3. Calendar years — one per year touched by the data window
@@ -1028,15 +1028,17 @@ fn compute_date_presets(
     out.push(entry(t.all_dates, data_from, data_to, None, None));
 
     // ── Relative presets, anchored at the latest record ──
-    // "Last 48H" uses a precise 48-hour window anchored at the latest record's
-    // actual timestamp — Hour buckets are atomic so there's no need to align
-    // to date boundaries. The from/to dates exist only for the date-picker
-    // display; the filter's lower bound comes from the precise_from field.
-    // Forces Hour resolution since a daily bar chart of two days is rarely
-    // what the user wants. Disabled at Week / Month resolutions by the
-    // sidebar's days < min_days check.
+    // "Last 24H" / "Last 48H" use a precise window anchored at the latest
+    // record's actual timestamp — Hour buckets are atomic so there's no need
+    // to align to date boundaries. The from/to dates exist only for the
+    // date-picker display; the filter's lower bound comes from the
+    // precise_from field. Both force Hour resolution since a daily bar chart
+    // of one or two days is rarely what the user wants. Disabled at Week /
+    // Month resolutions by the sidebar's days < min_days check.
+    let last_24h_precise = latest_ts - Duration::hours(24);
     let last_48h_precise = latest_ts - Duration::hours(48);
-    let relatives: [(&str, Option<NaiveDate>, Option<Resolution>, Option<DateTime<Utc>>); 6] = [
+    let relatives: [(&str, Option<NaiveDate>, Option<Resolution>, Option<DateTime<Utc>>); 7] = [
+        (t.last_24h,      Some(last_24h_precise.date_naive()),                       Some(Resolution::Hour), Some(last_24h_precise)),
         (t.last_48h,      Some(last_48h_precise.date_naive()),                       Some(Resolution::Hour), Some(last_48h_precise)),
         (t.last_week,     Some(data_to - Duration::days(7)),                         None, None),
         (t.last_month,    data_to.checked_sub_months(Months::new(1)),                None, None),
