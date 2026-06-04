@@ -553,7 +553,9 @@ pub async fn fetch_telraam_api(source_id: &str, url: &str)
 ///           D=westbound (OUT_ouest), E=motor vehicles, F=grand total
 ///   Rows 4..N — hourly data; Time is an Excel datetime cell in Montreal
 ///           local time (DST-aware UTC conversion via chrono-tz).
-///   Row N+1 — "Total" footer (skipped because the time cell is a string).
+///   Trailing footer — either a "Total" row (string time cell, skipped because
+///           it fails datetime parsing) or a partial last-hour row with a valid
+///           timestamp but blank count cells (skipped via the all-blank guard).
 ///
 /// Emits records under the source's id (totals) and `<id>-east` / `<id>-west`
 /// (directionals).  Bike-only — the motor-vehicle column is intentionally
@@ -607,6 +609,10 @@ pub fn parse_cdn_ndg_excel(source_id: &str, bytes: &[u8]) -> Vec<CountRecord> {
     fn val_at(row: &[Data], col: Option<usize>) -> f64 {
         col.and_then(|c| row.get(c)).map(cell_f64).unwrap_or(0.0)
     }
+    // A cell is blank if it is missing or holds Data::Empty.
+    fn is_blank(row: &[Data], col: Option<usize>) -> bool {
+        !matches!(col.and_then(|c| row.get(c)), Some(c) if !matches!(c, Data::Empty))
+    }
 
     let mut rows_iter = range.rows();
     // Banner + blank.
@@ -631,6 +637,13 @@ pub fn parse_cdn_ndg_excel(source_id: &str, bytes: &[u8]) -> Vec<CountRecord> {
     let mut records = Vec::new();
     for row in rows_iter {
         let Some(ndt) = row.get(dt_col).and_then(extract_dt) else { continue };
+        // Skip a trailing partial row (valid timestamp, no counts yet).
+        if is_blank(row, bike_total_col)
+            && is_blank(row, bike_east_col)
+            && is_blank(row, bike_west_col)
+        {
+            continue;
+        }
         let ts = match MontrealTz.from_local_datetime(&ndt) {
             LocalResult::Single(dt)       => dt.with_timezone(&Utc),
             LocalResult::Ambiguous(dt, _) => dt.with_timezone(&Utc),

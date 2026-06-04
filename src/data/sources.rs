@@ -202,7 +202,7 @@ pub fn cdn_ndg_sources() -> Vec<DataSource> {
         LatLon { lat: 45.47022, lon: -73.63204 },
         Utc.with_ymd_and_hms(2025, 7, 26, 0, 0, 0).unwrap(),
         vec![
-            "data/cdn-ndg/terrebonne-kensington/2025-07-26_2025-11-15.xlsx".into(),
+            "data/cdn-ndg/terrebonne-kensington/2025-07-26_2026-05-11.xlsx".into(),
         ],
         11, // base_color_idx; +1 → east, +2 → west.  Telraam used 5 and 8.
     );

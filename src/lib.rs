@@ -901,8 +901,8 @@ const VDM_DATASET_URL: &str = "https://donnees.montreal.ca/dataset/cyclistes";
 /// — the chip is a static stamp of when the data was received and how
 /// far it covers. Update these constants whenever a new batch is added
 /// to `static/data/cdn-ndg/`.
-const CDN_NDG_RECEIVED:     &str = "2025-12-19";
-const CDN_NDG_DATA_THROUGH: &str = "2025-11-15";
+const CDN_NDG_RECEIVED:     &str = "2026-06-04";
+const CDN_NDG_DATA_THROUGH: &str = "2026-05-11";
 const CDN_NDG_SEGMENT_NAME: &str = "Terrebonne @ Kensington";
 /// GitHub directory listing the source Excel files served from
 /// `static/data/cdn-ndg/terrebonne-kensington/`.

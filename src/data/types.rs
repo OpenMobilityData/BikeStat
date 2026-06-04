@@ -121,9 +121,9 @@ pub enum LoaderType {
     TelraamApi { segment_id: String },
     /// Eco-counter Excel exports obtained via access-to-information requests
     /// to the CDN-NDG borough.  Layout is ad hoc (banner row, blank, header,
-    /// hourly data, "Total" footer).  `file_urls`: paths relative to app root,
-    /// one per quarterly batch, e.g.
-    /// `"data/cdn-ndg/terrebonne-kensington/2025-07-26_2025-11-15.xlsx"`.
+    /// hourly data, trailing footer).  `file_urls`: paths relative to app root,
+    /// one per batch, e.g.
+    /// `"data/cdn-ndg/terrebonne-kensington/2025-07-26_2026-05-11.xlsx"`.
     CdnNdgExcel { file_urls: Vec<String> },
 }
 
