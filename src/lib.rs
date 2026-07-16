@@ -37,7 +37,15 @@ fn App() -> impl IntoView {
     let (telraam_api_fetched, set_telraam_api_fetched) =
         signal::<BTreeMap<String, DateTime<Utc>>>(BTreeMap::new());
 
-    let (selected_srcs, set_selected_srcs) = signal::<Vec<String>>(vec![]);
+    // Default landing selection: the three Terrebonne Total counts, so the
+    // chart is populated on first load rather than empty. IDs are the total
+    // source ids from `telraam_sources` / `cdn_ndg_sources` (no directional
+    // suffix): Royal, King Edward, and Kensington.
+    let (selected_srcs, set_selected_srcs) = signal::<Vec<String>>(vec![
+        "telraam-10045".into(),               // Terrebonne @ Royal (Total)
+        "telraam-9794".into(),                // Terrebonne @ King Edward (Total)
+        "cdnndg-terrebonne-kensington".into(), // Terrebonne @ Kensington (Total)
+    ]);
     let (selected_mods, set_selected_mods) = signal::<Vec<Modality>>(vec![Modality::Bikes]);
     let (resolution,    set_resolution)    = signal(Resolution::Day);
     let (view_mode,     set_view_mode)     = signal(ViewMode::Linear);
