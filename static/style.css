@@ -553,4 +553,14 @@ main {
 
     /* Tooltip can hit the screen edges — let it wrap rather than overflow. */
     .chart-tooltip { white-space: normal; max-width: 70vw; }
+
+    /* Legend stats drop to their own line, indented under the series label,
+       and wrap between "key value" pairs (joined by non-breaking spaces). */
+    .chart-legend-item { flex-wrap: wrap; white-space: normal; max-width: 100%; }
+    .legend-stats {
+        flex-basis: 100%;
+        box-sizing: border-box;
+        margin-left: 0;
+        padding-left: calc(24px + 0.35rem);
+    }
 }

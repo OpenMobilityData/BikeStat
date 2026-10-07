@@ -1,10 +1,13 @@
-use chrono::{DateTime, Utc};
+use std::collections::BTreeSet;
+
+use chrono::{DateTime, Datelike, NaiveDate, Utc, Weekday};
 use chrono_tz::America::Montreal as MontrealTz;
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 
+use crate::data::loader::local_date;
 use crate::data::types::{Resolution, ViewMode};
 use crate::i18n::Lang;
 
@@ -15,9 +18,58 @@ pub struct Series {
     /// SVG `stroke-dasharray` value; empty string means solid.
     pub dash: String,
     pub points: Vec<(DateTime<Utc>, f64)>,
+    /// Per-day averages shown in the legend; only set at Day resolution.
+    /// Computed by the caller before any axis shifting (Year-on-Year,
+    /// Winter-on-Winter), which would otherwise scramble the day of week.
+    pub day_avgs: Option<DayAverages>,
 }
 
-fn series_stats(points: &[(DateTime<Utc>, f64)]) -> String {
+#[derive(Clone, Copy, PartialEq)]
+pub struct DayAvg {
+    pub mean: f64,
+    /// Number of complete days the mean is taken over.
+    pub n: u32,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub struct DayAverages {
+    pub all: Option<DayAvg>,
+    pub weekday: Option<DayAvg>,
+    pub weekend: Option<DayAvg>,
+}
+
+/// Mean of daily buckets, overall and split by weekday / weekend, over the
+/// days in `complete` only — partial days would drag the averages down.
+/// Expects Day-resolution points keyed at Montreal local midnight with their
+/// true calendar date. Statutory holidays count as weekdays.
+pub fn day_averages(
+    points: &[(DateTime<Utc>, f64)],
+    complete: &BTreeSet<NaiveDate>,
+) -> DayAverages {
+    let (mut wd_sum, mut wd_n, mut we_sum, mut we_n) = (0.0_f64, 0u32, 0.0_f64, 0u32);
+    for (t, v) in points {
+        let d = local_date(*t);
+        if !complete.contains(&d) { continue; }
+        if matches!(d.weekday(), Weekday::Sat | Weekday::Sun) {
+            we_sum += *v; we_n += 1;
+        } else {
+            wd_sum += *v; wd_n += 1;
+        }
+    }
+    let avg = |sum: f64, n: u32| (n > 0).then(|| DayAvg { mean: sum / n as f64, n });
+    DayAverages {
+        all:     avg(wd_sum + we_sum, wd_n + we_n),
+        weekday: avg(wd_sum, wd_n),
+        weekend: avg(we_sum, we_n),
+    }
+}
+
+/// Non-breaking space: keeps each "key value" pair together when the legend
+/// wraps on narrow screens.
+const NBSP: char = '\u{a0}';
+
+fn series_stats(ser: &Series) -> String {
+    let points = &ser.points;
     if points.is_empty() { return String::new(); }
     let mut min = f64::INFINITY;
     let mut max = f64::NEG_INFINITY;
@@ -27,7 +79,19 @@ fn series_stats(points: &[(DateTime<Utc>, f64)]) -> String {
         if *v > max { max = *v; }
         sum += *v;
     }
-    format!("min {}  max {}  total {}", fmt_count(min), fmt_count(max), fmt_count(sum))
+    format!("min{NBSP}{}  max{NBSP}{}  total{NBSP}{}", fmt_count(min), fmt_count(max), fmt_count(sum))
+}
+
+/// "average 41 n=121 (WD 46 n=85; WE 25 n=36)", or None when the series
+/// carries no day averages (any resolution other than Day).
+fn average_stats(ser: &Series) -> Option<String> {
+    let a = ser.day_avgs?;
+    let one = |key: &str, v: Option<DayAvg>| match v {
+        Some(v) => format!("{key}{NBSP}{}{NBSP}n={}", fmt_count(v.mean), v.n),
+        None    => format!("{key}{NBSP}–"),
+    };
+    Some(format!("{} ({}; {})",
+        one("average", a.all), one("WD", a.weekday), one("WE", a.weekend)))
 }
 
 fn fmt_count(v: f64) -> String {
@@ -137,8 +201,9 @@ fn format_hover_date(ts: DateTime<Utc>, res: Resolution, mode: ViewMode) -> Stri
     match res {
         Resolution::Hour => ts.with_timezone(&MontrealTz)
             .format("%Y-%m-%d %H:%M %Z").to_string(),
+        // Buckets start at Montreal local midnight.
         Resolution::Day | Resolution::Week | Resolution::Month =>
-            ts.format("%Y-%m-%d").to_string(),
+            ts.with_timezone(&MontrealTz).format("%Y-%m-%d").to_string(),
     }
 }
 
@@ -209,24 +274,36 @@ async fn build_chart_png_blob(series: Vec<Series>) -> Result<web_sys::Blob, JsVa
     let serializer = web_sys::XmlSerializer::new()?;
     let chart_xml = serializer.serialize_to_string(&chart_clone)?;
 
-    // Layout. One legend row per series, single column.
+    // Layout. One legend row per series, single column. The day-average
+    // stats go on a second, indented row when they wouldn't fit beside the
+    // label and the min/max/total stats.
     let total_w   = 900.0_f64;
     let chart_h   = 400.0_f64;
     let row_h     = 20.0;
     let pad_top   = 8.0;
     let pad_bot   = 12.0;
-    let legend_h  = pad_top + (series.len().max(1) as f64) * row_h + pad_bot;
-    let total_h   = chart_h + legend_h;
+    let lx        = 22.0;
+    let lxe       = lx + 26.0;
+    let tx        = lxe + 8.0;
+    // Rough advance widths: 12px Inter label, 11px monospace stats.
+    let label_char_w = 6.8;
+    let stats_char_w = 6.7;
 
     let mut legend_xml = String::new();
-    for (i, ser) in series.iter().enumerate() {
-        let y      = chart_h + pad_top + (i as f64) * row_h + 14.0;
-        let lx     = 22.0;
-        let lxe    = lx + 26.0;
-        let tx     = lxe + 8.0;
+    let mut rows = 0usize;
+    for ser in series.iter() {
+        let y      = chart_h + pad_top + (rows as f64) * row_h + 14.0;
         let dash   = if ser.dash.is_empty() { String::new() }
                      else { format!(" stroke-dasharray=\"{}\"", escape_xml_attr(&ser.dash)) };
-        let stats  = series_stats(&ser.points);
+        let mut stats = series_stats(ser);
+        let avg = average_stats(ser);
+        let mut avg_row = None;
+        if let Some(a) = avg {
+            let joined = format!("{stats}  {a}");
+            let width = tx + ser.label.chars().count() as f64 * label_char_w
+                + 8.0 + joined.chars().count() as f64 * stats_char_w;
+            if width <= total_w - 12.0 { stats = joined; } else { avg_row = Some(a); }
+        }
         legend_xml.push_str(&format!(
             "<line x1=\"{lx:.1}\" y1=\"{ly:.1}\" x2=\"{lxe:.1}\" y2=\"{ly:.1}\" \
              stroke=\"{color}\" stroke-width=\"2\"{dash}/>\
@@ -237,7 +314,18 @@ async fn build_chart_png_blob(series: Vec<Series>) -> Result<web_sys::Blob, JsVa
             label = escape_xml_text(&ser.label),
             stats = escape_xml_text(&stats),
         ));
+        rows += 1;
+        if let Some(a) = avg_row {
+            legend_xml.push_str(&format!(
+                "<text x=\"{tx:.1}\" y=\"{y2:.1}\" class=\"export-legend-stats\">{a}</text>",
+                y2 = y + row_h,
+                a = escape_xml_text(&a),
+            ));
+            rows += 1;
+        }
     }
+    let legend_h  = pad_top + (rows.max(1) as f64) * row_h + pad_bot;
+    let total_h   = chart_h + legend_h;
 
     let composite = format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w:.1} {h:.1}" width="{w:.1}" height="{h:.1}">
@@ -512,9 +600,8 @@ pub fn Chart(
             vec![]
         } else {
             // At Hour resolution the time-of-day is what the user is reading,
-            // so include HH:MM and switch to Montreal local time (matching the
-            // tooltip's Hour-resolution convention). Coarser resolutions stay
-            // as plain dates.
+            // so include HH:MM. Coarser resolutions are plain dates. Both are
+            // Montreal local time, matching the local-day buckets.
             let res = resolution.get();
             (0..=x_tick_n).map(|i| {
                 let ts = (g.x_min + g.x_span * i as f64 / x_tick_n as f64) as i64;
@@ -523,7 +610,8 @@ pub fn Chart(
                     .map(|dt: DateTime<Utc>| match res {
                         Resolution::Hour => dt.with_timezone(&MontrealTz)
                             .format("%b %-d %H:%M").to_string(),
-                        _ => dt.format("%b %d").to_string(),
+                        _ => dt.with_timezone(&MontrealTz)
+                            .format("%b %d").to_string(),
                     })
                     .unwrap_or_default();
                 (x, label)
@@ -860,7 +948,10 @@ pub fn Chart(
                 view! {
                     <div class="chart-legend">
                         {s.into_iter().map(|ser| {
-                            let stats = series_stats(&ser.points);
+                            let stats = match average_stats(&ser) {
+                                Some(a) => format!("{}  {a}", series_stats(&ser)),
+                                None    => series_stats(&ser),
+                            };
                             view! {
                                 <div class="chart-legend-item">
                                     <svg width="24" height="10">

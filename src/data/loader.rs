@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
-use chrono::{DateTime, Datelike, LocalResult, TimeZone, Utc};
+use chrono::{DateTime, Datelike, LocalResult, NaiveDate, TimeZone, Utc};
 use chrono_tz::America::Montreal as MontrealTz;
 
 use crate::data::sources::{telraam_annotation, MONTREAL_CYCLISTES_URL, MONTREAL_LOCATION_FILTER, SOURCE_COLORS};
@@ -682,6 +682,42 @@ pub async fn fetch_cdn_ndg_excel(source_id: &str, url: &str) -> Result<Vec<Count
 
 // ── Aggregation ──────────────────────────────────────────────────────────────
 
+/// Montreal calendar date of an instant. Day / Week / Month buckets, the date
+/// window and the weekday/weekend split all use local days, not UTC days.
+pub fn local_date(ts: DateTime<Utc>) -> NaiveDate {
+    ts.with_timezone(&MontrealTz).date_naive()
+}
+
+/// Montreal local midnight starting `d`, as a UTC instant. Montreal's DST
+/// transitions happen at 02:00, so local midnight always exists exactly once;
+/// the fallback is unreachable but avoids a panic path.
+pub fn local_midnight(d: NaiveDate) -> DateTime<Utc> {
+    let ndt = d.and_hms_opt(0, 0, 0).expect("midnight is a valid time");
+    MontrealTz.from_local_datetime(&ndt).earliest()
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|| Utc.from_utc_datetime(&ndt))
+}
+
+/// Local dates on which a series has (near-)complete hourly coverage: at
+/// least 23 distinct hours with a record. 23 rather than 24 because the
+/// spring-forward day only has 23 hours; the fall-back day has 25.
+pub fn complete_days(
+    records: &[CountRecord],
+    modality: Modality,
+    source_id: &str,
+) -> BTreeSet<NaiveDate> {
+    let mut hours: BTreeMap<NaiveDate, BTreeSet<i64>> = BTreeMap::new();
+    for rec in records {
+        if rec.modality != modality || rec.source_id != source_id { continue; }
+        hours.entry(local_date(rec.timestamp)).or_default()
+            .insert(rec.timestamp.timestamp().div_euclid(3600));
+    }
+    hours.into_iter()
+        .filter(|(_, h)| h.len() >= 23)
+        .map(|(d, _)| d)
+        .collect()
+}
+
 pub fn aggregate(
     records: &[CountRecord],
     modality: Modality,
@@ -706,16 +742,17 @@ pub fn aggregate(
     // Trim a leading or trailing partial bucket for Week / Month resolutions
     // so the chart doesn't show a half-formed sum that reads as a traffic
     // drop. A bucket is "complete" iff the data extent reaches its first day
-    // (leading) or last day (trailing). Hour and Day buckets are atomic.
+    // (leading) or last day (trailing), in Montreal local dates. Hour and Day
+    // buckets are atomic.
     if matches!(resolution, Resolution::Week | Resolution::Month) {
         if let (Some(min), Some(max)) = (min_ts, max_ts) {
             if let Some((b_start, _)) = out.first().copied() {
-                if min.date_naive() != b_start.date_naive() {
+                if local_date(min) != local_date(b_start) {
                     out.remove(0);
                 }
             }
             if let Some((b_start, _)) = out.last().copied() {
-                if max.date_naive() != bucket_last_day(b_start, resolution) {
+                if local_date(max) != bucket_last_day(b_start, resolution) {
                     out.pop();
                 }
             }
@@ -725,38 +762,39 @@ pub fn aggregate(
     out
 }
 
-fn bucket_last_day(b_start: DateTime<Utc>, res: Resolution) -> chrono::NaiveDate {
+fn bucket_last_day(b_start: DateTime<Utc>, res: Resolution) -> NaiveDate {
+    let nd = local_date(b_start);
     match res {
-        Resolution::Week => b_start.date_naive() + chrono::Duration::days(6),
+        Resolution::Week => nd + chrono::Duration::days(6),
         Resolution::Month => {
-            let nd = b_start.date_naive();
             let (y, m) = if nd.month() == 12 {
                 (nd.year() + 1, 1)
             } else {
                 (nd.year(), nd.month() + 1)
             };
-            chrono::NaiveDate::from_ymd_opt(y, m, 1).unwrap() - chrono::Duration::days(1)
+            NaiveDate::from_ymd_opt(y, m, 1).unwrap() - chrono::Duration::days(1)
         }
         // Hour and Day buckets are atomic — this helper is only called for
         // Week / Month, but return something sensible for completeness.
-        Resolution::Hour | Resolution::Day => b_start.date_naive(),
+        Resolution::Hour | Resolution::Day => nd,
     }
 }
 
+/// Bucket start for `ts`. Day / Week / Month buckets begin at Montreal local
+/// midnight (stored as the equivalent UTC instant), so formatting a key with
+/// `%Y-%m-%d` yields its local date. Hour buckets are offset-agnostic since
+/// Montreal's UTC offset is a whole number of hours.
 fn bucket_key(ts: DateTime<Utc>, res: Resolution) -> i64 {
     use chrono::Timelike;
-    match res {
-        Resolution::Hour => ts
+    let d = local_date(ts);
+    let start = match res {
+        Resolution::Hour => return ts
             .with_minute(0).unwrap().with_second(0).unwrap().with_nanosecond(0).unwrap()
             .timestamp(),
-        Resolution::Day => ts.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
-        Resolution::Week => {
-            let dow = ts.weekday().num_days_from_monday();
-            (ts.date_naive() - chrono::Duration::days(dow as i64))
-                .and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp()
-        }
-        Resolution::Month => ts
-            .date_naive().with_day(1).unwrap()
-            .and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
-    }
+        Resolution::Day   => d,
+        Resolution::Week  => d - chrono::Duration::days(d.weekday().num_days_from_monday() as i64),
+        Resolution::Month => d.with_day(1).unwrap(),
+    };
+    local_midnight(start).timestamp()
 }
+

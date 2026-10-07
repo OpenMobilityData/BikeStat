@@ -11,9 +11,10 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use data::{loader, sources};
+use data::loader::{local_date, local_midnight};
 use data::sources::telraam_annotation;
 use data::types::{CountRecord, DataSource, DayKind, LoaderType, Modality, Resolution, ViewMode};
-use components::chart::{Chart, Series};
+use components::chart::{day_averages, Chart, DayAverages, Series};
 use components::map::SourceMap;
 use components::sidebar::Sidebar;
 use i18n::Lang;
@@ -242,7 +243,7 @@ fn App() -> impl IntoView {
         signal::<Vec<(String, NaiveDate, NaiveDate, i64, Option<Resolution>, Option<DateTime<Utc>>)>>(vec![]);
     Effect::new(move |_| {
         let recs = records.get();
-        let first    = recs.iter().map(|r| r.timestamp.date_naive()).min();
+        let first    = recs.iter().map(|r| local_date(r.timestamp)).min();
         let last_ts  = recs.iter().map(|r| r.timestamp).max();
         let presets = match (first, last_ts) {
             (Some(f), Some(lts)) => compute_date_presets(f, lts, lang.get()),
@@ -310,7 +311,7 @@ fn App() -> impl IntoView {
             .map(|r| r.timestamp)
             .min();
         let Some(start) = earliest else { return };
-        let start_d = start.date_naive();
+        let start_d = local_date(start);
         let end_d = start_d.checked_add_months(Months::new(12)).unwrap_or(start_d);
         set_date_from.set(start_d);
         set_date_to.set(end_d);
@@ -358,11 +359,20 @@ fn App() -> impl IntoView {
         let day_kinds = selected_day_kinds.get();
         let l         = lang.get();
 
-        let from_dt = precise_from_ts.get().or_else(|| {
-            from_d.and_hms_opt(0, 0, 0).map(|ndt| Utc.from_utc_datetime(&ndt))
-        });
-        let to_dt = to_d.and_hms_opt(23, 59, 59)
-            .map(|ndt| Utc.from_utc_datetime(&ndt));
+        // The window covers whole Montreal calendar days: local midnight on
+        // `from_d` up to the last second before local midnight after `to_d`.
+        let from_dt = Some(precise_from_ts.get().unwrap_or_else(|| local_midnight(from_d)));
+        let to_dt   = Some(local_midnight(to_d + Duration::days(1)) - Duration::seconds(1));
+
+        // Day-resolution legend averages, over complete local days only.
+        let day_avgs_for = |pts: &[(DateTime<Utc>, f64)], complete: &BTreeSet<NaiveDate>|
+            -> Option<DayAverages> {
+            (res == Resolution::Day).then(|| day_averages(pts, complete))
+        };
+        let complete_days_for = |modality: Modality, src_id: &str| -> BTreeSet<NaiveDate> {
+            if res == Resolution::Day { loader::complete_days(&recs, modality, src_id) }
+            else { BTreeSet::new() }
+        };
 
         match mode {
             ViewMode::Linear => {
@@ -377,11 +387,13 @@ fn App() -> impl IntoView {
                             if let Some(f) = from_dt { pts.retain(|(dt, _)| *dt >= f); }
                             if let Some(t) = to_dt   { pts.retain(|(dt, _)| *dt <= t); }
                             if !pts.is_empty() {
+                                let day_avgs = day_avgs_for(&pts, &complete_days_for(*modality, src_id));
                                 out.push(Series {
                                     label:  format!("{} – {}", meta.name, modality.label(l)),
                                     color:  series_color(*modality, src_idx),
                                     dash:   modality.stroke_dasharray().unwrap_or("").to_string(),
                                     points: pts,
+                                    day_avgs,
                                 });
                             }
                         }
@@ -398,14 +410,17 @@ fn App() -> impl IntoView {
                         if !meta.modalities.contains(modality) { continue; }
                         let pts = loader::aggregate(&recs, *modality, res, Some(src_id));
                         if pts.is_empty() { continue; }
+                        let complete = complete_days_for(*modality, src_id);
 
                         // Bucket each point by integer years past `start`,
                         // then shift each bucket back onto the [start, +12mo) axis.
+                        // Day averages are taken before shifting, which would
+                        // otherwise change each point's day of week.
                         let mut by_year: BTreeMap<i32, Vec<(DateTime<Utc>, f64)>> = BTreeMap::new();
                         for (t, v) in pts {
                             let yo = year_offset(t, start);
                             if yo < 0 { continue; }
-                            by_year.entry(yo).or_default().push((shift_back_years(t, yo), v));
+                            by_year.entry(yo).or_default().push((t, v));
                         }
                         for (yo, year_pts) in by_year {
                             let y0 = start.year() + yo;
@@ -414,11 +429,14 @@ fn App() -> impl IntoView {
                             } else {
                                 format!("{}–{}", y0, y0 + 1)
                             };
+                            let day_avgs = day_avgs_for(&year_pts, &complete);
                             out.push(Series {
                                 label:  format!("{} – {} ({})", meta.name, modality.label(l), year_label),
                                 color:  yoy_color(yo),
                                 dash:   modality.stroke_dasharray().unwrap_or("").to_string(),
-                                points: year_pts,
+                                points: year_pts.into_iter()
+                                    .map(|(t, v)| (shift_back_years(t, yo), v)).collect(),
+                                day_avgs,
                             });
                         }
                     }
@@ -440,22 +458,27 @@ fn App() -> impl IntoView {
                         if !meta.modalities.contains(modality) { continue; }
                         let pts = loader::aggregate(&recs, *modality, res, Some(src_id));
                         if pts.is_empty() { continue; }
+                        let complete = complete_days_for(*modality, src_id);
 
                         let mut by_winter: BTreeMap<i32, Vec<(DateTime<Utc>, f64)>> = BTreeMap::new();
                         for (t, v) in pts {
                             let Some(wy) = winter_season_year(t) else { continue };
                             let offset = wy - anchor_year;
                             if offset < 0 { continue; }
-                            by_winter.entry(offset).or_default().push((shift_back_years(t, offset), v));
+                            by_winter.entry(offset).or_default().push((t, v));
                         }
                         for (offset, winter_pts) in by_winter {
                             let y0 = anchor_year + offset;
                             let label = format!("{}/{}", y0, y0 + 1);
+                            // As in YearOnYear: average before shifting.
+                            let day_avgs = day_avgs_for(&winter_pts, &complete);
                             out.push(Series {
                                 label:  format!("{} – {} ({})", meta.name, modality.label(l), label),
                                 color:  yoy_color(offset),
                                 dash:   modality.stroke_dasharray().unwrap_or("").to_string(),
-                                points: winter_pts,
+                                points: winter_pts.into_iter()
+                                    .map(|(t, v)| (shift_back_years(t, offset), v)).collect(),
+                                day_avgs,
                             });
                         }
                     }
@@ -526,6 +549,7 @@ fn App() -> impl IntoView {
                                     DayKind::Weekend => "6 3".to_string(),
                                 },
                                 points,
+                                day_avgs: None,
                             });
                         }
                     }
@@ -549,20 +573,18 @@ fn App() -> impl IntoView {
             ViewMode::Linear => None,
             ViewMode::YearOnYear => {
                 let d = date_from.get();
-                d.checked_add_months(Months::new(12)).and_then(|end_d| {
-                    let start = Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0)?);
-                    let end   = Utc.from_utc_datetime(&end_d.and_hms_opt(23, 59, 59)?);
-                    Some((start, end))
-                })
+                d.checked_add_months(Months::new(12)).map(|end_d| (
+                    local_midnight(d),
+                    local_midnight(end_d + Duration::days(1)) - Duration::seconds(1),
+                ))
             }
             ViewMode::WinterOnWinter => {
                 let d = date_from.get();
                 let (em, ed) = WINTER_END_MD;
-                NaiveDate::from_ymd_opt(d.year() + 1, em, ed).and_then(|end_d| {
-                    let start = Utc.from_utc_datetime(&d.and_hms_opt(0, 0, 0)?);
-                    let end   = Utc.from_utc_datetime(&end_d.and_hms_opt(23, 59, 59)?);
-                    Some((start, end))
-                })
+                NaiveDate::from_ymd_opt(d.year() + 1, em, ed).map(|end_d| (
+                    local_midnight(d),
+                    local_midnight(end_d + Duration::days(1)) - Duration::seconds(1),
+                ))
             }
             ViewMode::DailyAveraging => {
                 // Span exactly 24 h (midnight to next midnight) so the chart's
@@ -945,7 +967,9 @@ fn cross_street(full_name: &str) -> String {
 /// Expand the visible date window to include all timestamps in `recs`.
 /// Never shrinks an existing bound — only moves `from` earlier or `to` later.
 /// Skipped while in YearOnYear or WinterOnWinter mode so late-arriving data
-/// doesn't shift the fixed comparison axis out from under the user.
+/// doesn't shift the fixed comparison axis out from under the user, and in
+/// DailyAveraging, whose 24-hour axis would hide a silently widened window
+/// (e.g. a Nov 16 – Mar 31 profile quietly averaging in April).
 fn update_date_range(
     recs: &[CountRecord],
     view_mode: ReadSignal<ViewMode>,
@@ -955,11 +979,13 @@ fn update_date_range(
     set_to:    WriteSignal<NaiveDate>,
 ) {
     let mode = view_mode.get_untracked();
-    if matches!(mode, ViewMode::YearOnYear | ViewMode::WinterOnWinter) { return; }
+    if matches!(mode, ViewMode::YearOnYear | ViewMode::WinterOnWinter | ViewMode::DailyAveraging) {
+        return;
+    }
 
     let (Some(new_first), Some(new_last)) = (
-        recs.iter().map(|r| r.timestamp.date_naive()).min(),
-        recs.iter().map(|r| r.timestamp.date_naive()).max(),
+        recs.iter().map(|r| local_date(r.timestamp)).min(),
+        recs.iter().map(|r| local_date(r.timestamp)).max(),
     ) else { return };
 
     set_from.set(date_from.get_untracked().min(new_first));
@@ -1024,7 +1050,7 @@ fn compute_date_presets(
     lang:      Lang,
 ) -> Vec<(String, NaiveDate, NaiveDate, i64, Option<Resolution>, Option<DateTime<Utc>>)> {
     let t = lang.t();
-    let data_to = latest_ts.date_naive();
+    let data_to = local_date(latest_ts);
 
     let entry = |label: &str, f: NaiveDate, tdate: NaiveDate, force_res: Option<Resolution>, precise_from: Option<DateTime<Utc>>| {
         (label.to_string(), f, tdate, (tdate - f).num_days(), force_res, precise_from)
@@ -1046,8 +1072,8 @@ fn compute_date_presets(
     let last_24h_precise = latest_ts - Duration::hours(24);
     let last_48h_precise = latest_ts - Duration::hours(48);
     let relatives: [(&str, Option<NaiveDate>, Option<Resolution>, Option<DateTime<Utc>>); 7] = [
-        (t.last_24h,      Some(last_24h_precise.date_naive()),                       Some(Resolution::Hour), Some(last_24h_precise)),
-        (t.last_48h,      Some(last_48h_precise.date_naive()),                       Some(Resolution::Hour), Some(last_48h_precise)),
+        (t.last_24h,      Some(local_date(last_24h_precise)),                        Some(Resolution::Hour), Some(last_24h_precise)),
+        (t.last_48h,      Some(local_date(last_48h_precise)),                        Some(Resolution::Hour), Some(last_48h_precise)),
         (t.last_week,     Some(data_to - Duration::days(7)),                         None, None),
         (t.last_month,    data_to.checked_sub_months(Months::new(1)),                None, None),
         (t.last_3_months, data_to.checked_sub_months(Months::new(3)),                None, None),
@@ -1124,10 +1150,11 @@ fn series_color(modality: Modality, source_idx: usize) -> String {
     hsl_to_hex(hue, 0.72, lightness)
 }
 
-/// Number of full 12-month periods between `start` and `t`, using calendar
-/// month/day comparison (so leap years don't shift the boundary).  Negative
-/// when `t` is before `start`.
+/// Number of full 12-month periods between `start` and `t`, using Montreal
+/// calendar month/day comparison (so leap years don't shift the boundary).
+/// Negative when `t` is before `start`.
 fn year_offset(t: DateTime<Utc>, start: DateTime<Utc>) -> i32 {
+    let (t, start) = (local_date(t), local_date(start));
     let mut offset = t.year() - start.year();
     if (t.month(), t.day()) < (start.month(), start.day()) {
         offset -= 1;
@@ -1135,14 +1162,22 @@ fn year_offset(t: DateTime<Utc>, start: DateTime<Utc>) -> i32 {
     offset
 }
 
-/// Subtract `years` calendar years from `t`. Uses chrono's `Months` so a
-/// Feb 29 in a leap year maps to Feb 28 in non-leap years rather than failing.
+/// Subtract `years` calendar years from `t`, in Montreal local time so a
+/// bucket at local midnight stays at local midnight. Uses chrono's `Months`
+/// so a Feb 29 in a leap year maps to Feb 28 in non-leap years rather than
+/// failing. A local time that falls in the target year's spring-forward gap
+/// moves one hour later.
 fn shift_back_years(t: DateTime<Utc>, years: i32) -> DateTime<Utc> {
     if years <= 0 { return t; }
-    let date = t.date_naive()
+    let local = t.with_timezone(&MontrealTz).naive_local();
+    let date = local.date()
         .checked_sub_months(Months::new(12 * years as u32))
-        .unwrap_or_else(|| t.date_naive());
-    Utc.from_utc_datetime(&date.and_time(t.time()))
+        .unwrap_or_else(|| local.date());
+    let shifted = date.and_time(local.time());
+    MontrealTz.from_local_datetime(&shifted).earliest()
+        .or_else(|| MontrealTz.from_local_datetime(&(shifted + Duration::hours(1))).earliest())
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or(t)
 }
 
 // ── Winter-on-Winter helpers ─────────────────────────────────────────────────
@@ -1160,7 +1195,7 @@ const WINTER_END_MD:   (u32, u32) = (3, 31);
 /// Calendar year `Y` such that `t` belongs to "Winter Y/Y+1", or `None` if
 /// `t` is outside the Nov 16 – Mar 31 window.
 fn winter_season_year(t: DateTime<Utc>) -> Option<i32> {
-    let d = t.date_naive();
+    let d = local_date(t);
     let (m, day) = (d.month(), d.day());
     let (sm, sd) = WINTER_START_MD;
     let (em, _ed) = WINTER_END_MD;
@@ -1196,3 +1231,4 @@ fn hsl_to_hex(h: f64, s: f64, l: f64) -> String {
     let u = |v: f64| ((v + m).clamp(0.0, 1.0) * 255.0).round() as u8;
     format!("#{:02x}{:02x}{:02x}", u(r), u(g), u(b))
 }
+
