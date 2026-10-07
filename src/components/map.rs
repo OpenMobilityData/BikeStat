@@ -19,6 +19,20 @@ const FIT_FRACTION: f64 = 0.70;
 const MAX_SCALE: f64 = 2.5;
 /// Render tiles to cover up to this *scaled* pixel width either side of centre.
 const ASSUMED_MAX_VIEWPORT_W: f64 = 3200.0;
+/// CARTO basemaps API key, baked in at compile time. Without it CARTO still
+/// serves tiles but watermarks them with "API KEY REQUIRED".
+const CARTO_API_KEY: Option<&str> = option_env!("CARTO_API_KEY");
+
+fn tile_url(zoom: u32, x: i64, y: i64) -> String {
+    let base = format!(
+        "https://basemaps.cartocdn.com/rastertiles/dark_nolabels/{}/{}/{}@2x.png",
+        zoom, x, y,
+    );
+    match CARTO_API_KEY {
+        Some(key) if !key.is_empty() => format!("{base}?key={key}"),
+        _ => base,
+    }
+}
 
 /// (lat, lon) → fractional Web Mercator tile coordinates at a given zoom.
 fn lat_lon_to_tile(lat: f64, lon: f64, zoom: u32) -> (f64, f64) {
@@ -141,10 +155,7 @@ pub fn SourceMap(
                         let tx_wrapped = ((tx % n_tiles) + n_tiles) % n_tiles;
                         let off_x = (tx as f64 - cx_tile) * TILE_SIZE;
                         let off_y = (ty as f64 - cy_tile) * TILE_SIZE;
-                        let url = format!(
-                            "https://a.basemaps.cartocdn.com/dark_nolabels/{}/{}/{}@2x.png",
-                            zoom, tx_wrapped, ty,
-                        );
+                        let url = tile_url(zoom, tx_wrapped, ty);
                         let style = format!(
                             "left: calc(50% + {:.0}px); top: calc(50% + {:.0}px);",
                             off_x, off_y,

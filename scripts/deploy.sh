@@ -14,6 +14,17 @@ cd "$(dirname "$0")/.."
 # shellcheck disable=SC1091
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
+# CARTO basemaps key is compiled into the wasm (see src/components/map.rs).
+# Take it from the environment, else from the gitignored .carto-api-key file.
+if [ -z "${CARTO_API_KEY:-}" ] && [ -f .carto-api-key ]; then
+    CARTO_API_KEY="$(tr -d '[:space:]' < .carto-api-key)"
+fi
+if [ -z "${CARTO_API_KEY:-}" ]; then
+    echo "error: CARTO_API_KEY not set and .carto-api-key missing" >&2
+    exit 1
+fi
+export CARTO_API_KEY
+
 trunk build --release
 
 rsync -av --delete \

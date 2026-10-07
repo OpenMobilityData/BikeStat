@@ -2,6 +2,7 @@
 /dist
 Cargo.lock
 .claude/
+.carto-api-key
 
 # Populated at deploy time by the hourly cron, or once locally for dev.
 static/data/cyclistes.csv

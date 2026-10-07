@@ -105,6 +105,13 @@ feature, so the code path is compiled out of the deployed wasm.
 ./scripts/deploy.sh
 ```
 
+The map uses CARTO `dark_nolabels` tiles, which require a free API key
+(request one at https://carto.com/basemaps/apikey). Put it in a
+gitignored `.carto-api-key` file at the repo root, or export
+`CARTO_API_KEY`; the key is compiled into the wasm. For local dev, run
+`CARTO_API_KEY=$(cat .carto-api-key) trunk serve` — without a key the
+tiles render with an "API KEY REQUIRED" watermark.
+
 Runs `trunk build --release` and rsyncs `dist/` to the production host,
 excluding `data/cyclistes.csv`, `data/status.txt`, and
 `data/telraam/*/api.json` so the cron-managed files on the server are
