@@ -83,6 +83,7 @@ fn App() -> impl IntoView {
     set_sources.update(|s| {
         s.extend(telraam.clone());
         s.extend(cdn_ndg.clone());
+        s.extend(sources::vdm_eco_sources());
     });
 
     // ── Data freshness indicator ──
@@ -126,6 +127,29 @@ fn App() -> impl IntoView {
                     replace_msg(&set_load_msgs,
                         "⏳ Loading Montréal data…",
                         &format!("⚠ Montréal: {}", e));
+                }
+            }
+        });
+    }
+
+    // ── Fetch each year of the VdM eco-counter feed ──
+    // One cron-filtered CSV per year carries every catalogued eco-counter.
+    let current_year = local_date(Utc::now()).year();
+    for year in sources::VDM_ECO_FIRST_YEAR..=current_year {
+        let set_records   = set_records.clone();
+        let set_load_msgs = set_load_msgs.clone();
+        spawn_local(async move {
+            let msg = format!("⏳ Loading Montréal eco-counters {}…", year);
+            add_msg(&set_load_msgs, &msg);
+            match loader::fetch_vdm_eco_csv(&sources::vdm_eco_url(year)).await {
+                Ok(new_recs) => {
+                    update_date_range(&new_recs, view_mode, date_from, date_to, set_date_from, set_date_to);
+                    set_records.update(|r| r.extend(new_recs));
+                    remove_msg(&set_load_msgs, &msg);
+                }
+                Err(e) => {
+                    replace_msg(&set_load_msgs, &msg,
+                        &format!("⚠ Montréal eco-counters {}: {}", year, e));
                 }
             }
         });

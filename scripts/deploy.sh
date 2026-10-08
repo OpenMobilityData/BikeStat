@@ -32,4 +32,5 @@ rsync -av --delete \
     --exclude='data/cyclistes-all.csv' \
     --exclude='data/status.txt' \
     --exclude='data/telraam/*/api.json' \
+    --exclude='data/vdm-eco/' \
     dist/ "${REMOTE}:${DEST}"

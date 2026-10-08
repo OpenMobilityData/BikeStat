@@ -29,6 +29,7 @@ Production deployment: https://bikestat.org
 | Source | Loader | Cadence |
 |---|---|---|
 | Ville de Montréal `cyclistes.csv` | Server cron pre-filters to catalogued streets and serves the result statically | Hourly |
+| Ville de Montréal eco-counters (`comptage_velo_<year>.csv`, 2024+) | Server cron pre-filters each year's CSV to catalogued counter IDs; 15-min rows are summed to hourly in the browser | Hourly |
 | Telraam (legacy S1 + current S2 sensors) | Historical xlsx exports plus a rolling 90-day JSON snapshot fetched from the Level-5 API by a server cron | Hourly |
 | CDN-NDG borough eco-counter | Quarterly xlsx batches obtained via access-to-information requests, loaded statically | Manual on receipt |
 
@@ -61,6 +62,7 @@ src/
 scripts/
   deploy.sh           trunk build + rsync (excludes cron-managed files)
   refresh-vdm.sh      Hourly cron: VdM CSV download + street filter
+  refresh-vdm-eco.sh  Hourly cron: VdM eco-counter yearly CSVs + counter-ID filter
   refresh-telraam.sh  Hourly cron: Telraam API JSON snapshot per segment
 static/
   style.css
@@ -79,7 +81,10 @@ Trunk compiles the WASM bundle and reloads on source changes. The
 Telraam and CDN-NDG xlsx files load from `static/data/`; the VdM CSV and
 the Telraam API JSON snapshots are populated only on the production
 server, so those feeds show as unavailable in dev unless a copy is
-dropped in by hand for testing.
+dropped in by hand for testing.  The VdM eco-counter files can be
+populated locally with
+`BIKESTAT_DATA_DIR=static/data ./scripts/refresh-vdm-eco.sh`
+(writes the gitignored `static/data/vdm-eco/<year>.csv`).
 
 ### Unfiltered VdM mode (local testing only)
 
@@ -113,8 +118,8 @@ gitignored `.carto-api-key` file at the repo root, or export
 tiles render with an "API KEY REQUIRED" watermark.
 
 Runs `trunk build --release` and rsyncs `dist/` to the production host,
-excluding `data/cyclistes.csv`, `data/status.txt`, and
-`data/telraam/*/api.json` so the cron-managed files on the server are
+excluding `data/cyclistes.csv`, `data/status.txt`,
+`data/telraam/*/api.json`, and `data/vdm-eco/` so the cron-managed files on the server are
 not overwritten.
 
 The server's lighttpd vhost, certbot configuration, and cron entries
@@ -126,6 +131,11 @@ are documented in
 - **Ville de Montréal street**: add to `MONTREAL_LOCATION_FILTER` in
   `src/data/sources.rs` *and* to the `FILTER_RE` regex in
   `scripts/refresh-vdm.sh` (the shell filter must remain a superset).
+- **VdM eco-counter**: add a `VdmEcoSite` to `VDM_ECO_SITES` in
+  `src/data/sources.rs` (counter IDs and coordinates are in the
+  dataset's `localisations_globale.csv`) *and* add its `id_compteur` to
+  `COUNTER_IDS` in `scripts/refresh-vdm-eco.sh`.  The script notices the
+  changed ID list and re-filters past years on its next run.
 - **Telraam segment**: register via `push_telraam_segment` in
   `sources.rs`, drop the historical xlsx exports under
   `static/data/telraam/<segment>/`, and add the segment ID + API token

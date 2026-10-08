@@ -4,7 +4,7 @@ use std::io::Cursor;
 use chrono::{DateTime, Datelike, LocalResult, NaiveDate, TimeZone, Utc};
 use chrono_tz::America::Montreal as MontrealTz;
 
-use crate::data::sources::{telraam_annotation, MONTREAL_CYCLISTES_URL, MONTREAL_LOCATION_FILTER, SOURCE_COLORS};
+use crate::data::sources::{telraam_annotation, vdm_eco_counter_target, MONTREAL_CYCLISTES_URL, MONTREAL_LOCATION_FILTER, SOURCE_COLORS};
 use crate::data::types::{CountRecord, DataSource, LatLon, LoaderType, Modality, Resolution};
 
 // ── CSV helpers ──────────────────────────────────────────────────────────────
@@ -678,6 +678,80 @@ pub async fn fetch_cdn_ndg_excel(source_id: &str, url: &str) -> Result<Vec<Count
     if !resp.ok() { return Err(format!("HTTP {}", resp.status())); }
     let bytes = resp.binary().await.map_err(|e| format!("Binary error: {:?}", e))?;
     Ok(parse_cdn_ndg_excel(source_id, &bytes))
+}
+
+// ── VdM eco-counter CSV ──────────────────────────────────────────────────────
+
+/// Parse one year of the VdM eco-counter feed (`comptage_velo_<year>.csv`,
+/// pre-filtered server-side).  Columns: `date,heure,id_compteur,nb_passages,
+/// longitude,latitude`, one row per counter per 15 minutes, in Montreal local
+/// time.  `date` is not always zero-padded (e.g. `2024-06-8`).
+///
+/// Quarter-hours are summed into hourly records.  Rows for counters not in
+/// `VDM_ECO_SITES` are ignored; counters at multi-counter sites also feed the
+/// site Total.  Rows inside the spring-forward gap are skipped, as in the
+/// other local-time parsers.
+pub fn parse_vdm_eco_csv(text: &str) -> Vec<CountRecord> {
+    let mut lines = text.lines();
+    let Some(header_line) = lines.next() else { return vec![] };
+    let headers = split_csv_line(header_line.trim_start_matches('\u{feff}'));
+    let Some(date_col)  = find_col(&headers, "date")        else { return vec![] };
+    let Some(time_col)  = find_col(&headers, "heure")       else { return vec![] };
+    let Some(id_col)    = find_col(&headers, "id_compteur") else { return vec![] };
+    let Some(count_col) = find_col(&headers, "nb_passages") else { return vec![] };
+
+    fn parse_date(s: &str) -> Option<NaiveDate> {
+        let mut it = s.trim().splitn(3, '-').map(|p| p.parse::<u32>().ok());
+        let (y, m, d) = (it.next()??, it.next()??, it.next()??);
+        NaiveDate::from_ymd_opt(y as i32, m, d)
+    }
+
+    let mut buckets: BTreeMap<(String, i64), f64> = BTreeMap::new();
+    for line in lines {
+        let fields = split_csv_line(line);
+        let get = |col: usize| fields.get(col).map(|s| s.trim()).unwrap_or("");
+
+        let Some((source_id, total_id)) = vdm_eco_counter_target(get(id_col)) else { continue };
+        let Ok(count) = get(count_col).parse::<f64>() else { continue };
+        let Some(date) = parse_date(get(date_col)) else { continue };
+        let Ok(time) = chrono::NaiveTime::parse_from_str(get(time_col), "%H:%M:%S") else { continue };
+
+        let ts = match MontrealTz.from_local_datetime(&date.and_time(time)) {
+            LocalResult::Single(dt)       => dt.with_timezone(&Utc),
+            LocalResult::Ambiguous(dt, _) => dt.with_timezone(&Utc),
+            LocalResult::None             => continue,
+        };
+        // Montreal's UTC offset is a whole number of hours, so flooring the
+        // UTC instant floors the local time too.
+        let hour = ts.timestamp().div_euclid(3600) * 3600;
+
+        if let Some(total_id) = total_id {
+            *buckets.entry((total_id.to_string(), hour)).or_insert(0.0) += count;
+        }
+        *buckets.entry((source_id, hour)).or_insert(0.0) += count;
+    }
+
+    buckets.into_iter()
+        .filter_map(|((source_id, ts), count)| Some(CountRecord {
+            timestamp: DateTime::from_timestamp(ts, 0)?,
+            modality: Modality::Bikes,
+            count,
+            source_id,
+        }))
+        .collect()
+}
+
+/// Fetch and parse one year of the eco-counter feed.  A 404 means the cron
+/// hasn't produced that year (yet), and returns no records rather than an
+/// error, like the Telraam API snapshots.
+pub async fn fetch_vdm_eco_csv(url: &str) -> Result<Vec<CountRecord>, String> {
+    let resp = gloo_net::http::Request::get(url)
+        .send().await
+        .map_err(|e| format!("Network error: {:?}", e))?;
+    if resp.status() == 404 { return Ok(vec![]); }
+    if !resp.ok() { return Err(format!("HTTP {}", resp.status())); }
+    let text = resp.text().await.map_err(|e| format!("Body error: {:?}", e))?;
+    Ok(parse_vdm_eco_csv(&text))
 }
 
 // ── Aggregation ──────────────────────────────────────────────────────────────

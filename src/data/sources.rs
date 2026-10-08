@@ -210,6 +210,123 @@ pub fn cdn_ndg_sources() -> Vec<DataSource> {
     out
 }
 
+// ── VdM eco-counter sources ──────────────────────────────────────────────────
+
+/// First year of VdM eco-counter data to load.  The client requests
+/// `vdm_eco_url(y)` for every year from here through the current one.
+pub const VDM_ECO_FIRST_YEAR: i32 = 2024;
+
+/// Per-year eco-counter CSV, pre-filtered to the counters below and served
+/// same-origin.  An hourly cron job (`scripts/refresh-vdm-eco.sh`) writes
+/// these; for local dev run that script once with
+/// `BIKESTAT_DATA_DIR=static/data`.
+pub fn vdm_eco_url(year: i32) -> String {
+    format!("data/vdm-eco/{}.csv", year)
+}
+
+/// One physical VdM eco-counter site.  A site with a single counter yields
+/// one source whose id is the site id.  A site with several co-located
+/// counters yields one sub-source per counter (`<site id>-<id_compteur>`)
+/// plus a synthesised Total under the site id, matching the VdM cyclistes
+/// convention of directionals followed by `(Total)`.
+pub struct VdmEcoSite {
+    /// Source id of the site (the Total, for multi-counter sites).  Must
+    /// start with `mtl-` so the site shows in the VdM freshness tooltip.
+    pub id: &'static str,
+    pub name: &'static str,
+    pub location: LatLon,
+    /// `(id_compteur, label)` pairs.  The label is only used for
+    /// multi-counter sites, as the parenthesised sub-source suffix.
+    pub counters: &'static [(&'static str, &'static str)],
+    pub earliest: (i32, u32, u32),
+    /// `SOURCE_COLORS` index for the site (Total); sub-sources take +1, +2, …
+    pub base_color_idx: usize,
+}
+
+/// Catalogued VdM eco-counter sites, in sidebar order.  Every `id_compteur`
+/// here must also be listed in `COUNTER_IDS` in `scripts/refresh-vdm-eco.sh`
+/// (the server-side pre-filter).  Locations and ids come from the dataset's
+/// `localisations_globale.csv`.
+pub static VDM_ECO_SITES: &[VdmEcoSite] = &[
+    VdmEcoSite {
+        id: "mtl-eco-maisonneuve-marcil",
+        name: "VdM: Maisonneuve @ Marcil",
+        location: LatLon { lat: 45.470493, lon: -73.609566 },
+        counters: &[("100011783", "")],
+        earliest: (2024, 1, 1),
+        base_color_idx: 2,
+    },
+    // City of Westmount.  Two counters share one point on Av Westmount by
+    // the park; the city's Power BI map shows them as a single "Av Lansdowne"
+    // site whose volume is the sum of both.
+    VdmEcoSite {
+        id: "mtl-eco-westmount-lansdowne",
+        name: "VdM: Westmount / Lansdowne",
+        location: LatLon { lat: 45.486020, lon: -73.605780 },
+        counters: &[("100060991", "Av Westmount"), ("100060992", "Av Lansdowne")],
+        earliest: (2026, 1, 1),
+        base_color_idx: 4,
+    },
+    VdmEcoSite {
+        id: "mtl-eco-westmount-cote-st-antoine",
+        name: "VdM: Westmount / Côte-St-Antoine",
+        location: LatLon { lat: 45.483957, lon: -73.603037 },
+        counters: &[("100061090", "")],
+        earliest: (2026, 1, 1),
+        base_color_idx: 7,
+    },
+];
+
+/// Source id that receives a counter's records, and the site Total id it
+/// also feeds when the site has several counters.
+pub fn vdm_eco_counter_target(id_compteur: &str) -> Option<(String, Option<&'static str>)> {
+    VDM_ECO_SITES.iter().find_map(|site| {
+        site.counters.iter().any(|(c, _)| *c == id_compteur).then(|| {
+            if site.counters.len() == 1 {
+                (site.id.to_string(), None)
+            } else {
+                (format!("{}-{}", site.id, id_compteur), Some(site.id))
+            }
+        })
+    })
+}
+
+/// Pre-configured VdM eco-counter sources.  Records for all of them arrive
+/// together from the per-year CSVs, so the sources are `Discovered`.
+pub fn vdm_eco_sources() -> Vec<DataSource> {
+    let mut out = Vec::new();
+    for site in VDM_ECO_SITES {
+        let (y, m, d) = site.earliest;
+        let earliest = Utc.with_ymd_and_hms(y, m, d, 0, 0, 0).unwrap();
+        let color = |offset: usize|
+            SOURCE_COLORS[(site.base_color_idx + offset) % SOURCE_COLORS.len()].to_string();
+        let source = |id: String, name: String, color: String| DataSource {
+            id, name,
+            location: site.location.clone(),
+            modalities: vec![Modality::Bikes],
+            earliest,
+            latest: Utc::now(),
+            color,
+            loader_type: LoaderType::Discovered,
+            group: Some(site.id.to_string()),
+        };
+
+        if site.counters.len() == 1 {
+            out.push(source(site.id.into(), site.name.into(), color(0)));
+            continue;
+        }
+        for (i, (id_compteur, label)) in site.counters.iter().enumerate() {
+            out.push(source(
+                format!("{}-{}", site.id, id_compteur),
+                format!("{} ({})", site.name, label),
+                color(i + 1),
+            ));
+        }
+        out.push(source(site.id.into(), format!("{} (Total)", site.name), color(0)));
+    }
+    out
+}
+
 /// Build and push the directional + total entries for a CDN-NDG counter.
 ///
 /// The directional sub-sources share the same `group` key as the total source
