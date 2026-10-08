@@ -34,6 +34,20 @@ pub const MONTREAL_LOCATION_FILTER: Option<&[(&str, &str)]> = Some(&[
 #[cfg(feature = "unfiltered")]
 pub const MONTREAL_LOCATION_FILTER: Option<&[(&str, &str)]> = None;
 
+/// VdM cyclistes detector feeds to fold into another feed, as
+/// `((instance, direction), (instance, direction))`.  Applied before
+/// grouping, so the alias's rows land in the target source.
+///
+/// det-00118-03 (no direction) is the Girouard northbound camera under a
+/// different id: it reports alone until 2025-10-29 17:00, det-00118-02 "Nord"
+/// then takes over until 2026-06-27 20:00, and det-00118-03 resumes.  The two
+/// share only those hand-over hours (each a partial hour, so summing them is
+/// correct) and sit ~15 m apart.  Confirmed on site: the Nord/Sud cameras
+/// face Girouard; det-00118-01 "Ouest" faces westbound Terrebonne.
+pub const MONTREAL_INSTANCE_ALIASES: &[((&str, &str), (&str, &str))] = &[
+    (("det-00118-03", ""), ("det-00118-02", "Nord")),
+];
+
 /// Color palette cycled through when assigning colors to discovered sources.
 pub const SOURCE_COLORS: &[&str] = &[
     "#e94560", "#4a9eff", "#7ed321", "#f5a623", "#bd10e0",

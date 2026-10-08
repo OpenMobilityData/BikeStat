@@ -4,7 +4,7 @@ use std::io::Cursor;
 use chrono::{DateTime, Datelike, LocalResult, NaiveDate, TimeZone, Utc};
 use chrono_tz::America::Montreal as MontrealTz;
 
-use crate::data::sources::{telraam_annotation, vdm_eco_counter_target, MONTREAL_CYCLISTES_URL, MONTREAL_LOCATION_FILTER, SOURCE_COLORS};
+use crate::data::sources::{telraam_annotation, vdm_eco_counter_target, MONTREAL_CYCLISTES_URL, MONTREAL_INSTANCE_ALIASES, MONTREAL_LOCATION_FILTER, SOURCE_COLORS};
 use crate::data::types::{CountRecord, DataSource, LatLon, LoaderType, Modality, Resolution};
 
 // ── CSV helpers ──────────────────────────────────────────────────────────────
@@ -109,6 +109,10 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
         let instance  = get(instance_col);
         let direction = direction_col.map(|c| get(c)).unwrap_or_default();
         if instance.is_empty() { continue; }
+        let (instance, direction) = MONTREAL_INSTANCE_ALIASES.iter()
+            .find(|((i, d), _)| *i == instance && *d == direction)
+            .map(|(_, (i, d))| (i.to_string(), d.to_string()))
+            .unwrap_or((instance, direction));
 
         let lat: f64 = match get(lat_col).parse()       { Ok(v) => v, Err(_) => continue };
         let lon: f64 = match get(lon_col).parse()       { Ok(v) => v, Err(_) => continue };
