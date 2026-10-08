@@ -29,6 +29,7 @@ pub const MONTREAL_CYCLISTES_URL: &str = "data/cyclistes-all.csv";
 #[cfg(not(feature = "unfiltered"))]
 pub const MONTREAL_LOCATION_FILTER: Option<&[(&str, &str)]> = Some(&[
     ("Girouard", "Terrebonne"),
+    ("Terrebonne", "Girouard"),  // det-00118-01, via MONTREAL_INSTANCE_STREETS
     ("Bourret",  "carie"),       // Bourret @ Décarie (any direction)
 ]);
 #[cfg(feature = "unfiltered")]
@@ -46,6 +47,19 @@ pub const MONTREAL_LOCATION_FILTER: Option<&[(&str, &str)]> = None;
 /// face Girouard; det-00118-01 "Ouest" faces westbound Terrebonne.
 pub const MONTREAL_INSTANCE_ALIASES: &[((&str, &str), (&str, &str))] = &[
     (("det-00118-03", ""), ("det-00118-02", "Nord")),
+];
+
+/// `(rue_1, rue_2)` overrides for VdM cyclistes detectors whose published
+/// street pair doesn't say which street they count, keyed by instance (after
+/// `MONTREAL_INSTANCE_ALIASES`).  Detectors sharing a street pair are grouped
+/// into one location with a synthesised Total, so this also splits groups.
+///
+/// The city files every Girouard @ Terrebonne detector under
+/// ("Girouard", "Terrebonne"), but det-00118-01 "Ouest" counts westbound
+/// Terrebonne, while det-00118-02 Nord/Sud count Girouard (confirmed on site).
+/// Summing them into one Total would mix two streets.
+pub const MONTREAL_INSTANCE_STREETS: &[(&str, (&str, &str))] = &[
+    ("det-00118-01", ("Terrebonne", "Girouard")),
 ];
 
 /// Color palette cycled through when assigning colors to discovered sources.

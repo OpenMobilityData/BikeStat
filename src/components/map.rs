@@ -19,6 +19,10 @@ const FIT_FRACTION: f64 = 0.70;
 const MAX_SCALE: f64 = 2.5;
 /// Render tiles to cover up to this *scaled* pixel width either side of centre.
 const ASSUMED_MAX_VIEWPORT_W: f64 = 3200.0;
+/// Approximate marker-label box in unscaled content px (11px font, see
+/// `.marker-label` in style.css), for the label collision check.
+const LABEL_H: f64 = 16.0;
+const LABEL_CHAR_W: f64 = 6.5;
 /// CARTO basemaps API key, baked in at compile time. Without it CARTO still
 /// serves tiles but watermarks them with "API KEY REQUIRED".
 const CARTO_API_KEY: Option<&str> = option_env!("CARTO_API_KEY");
@@ -166,6 +170,10 @@ pub fn SourceMap(
                     })
                     .collect_view();
 
+                // Labels placed so far, in unscaled content px: (x, y, chars,
+                // above).  Used to flip a label above its dot when it would
+                // overlap a neighbour's (e.g. two detectors at one corner).
+                let mut placed: Vec<(f64, f64, usize, bool)> = Vec::new();
                 let markers = srcs.into_iter().map(|src| {
                     let (sx, sy) = lat_lon_to_tile(src.location.lat, src.location.lon, zoom);
                     let off_x = (sx - cx_tile) * TILE_SIZE;
@@ -179,7 +187,21 @@ pub fn SourceMap(
                     // If the dot sits low enough that its label would clip past
                     // the bottom of the actual map container, flip it above.
                     let dot_actual_y = target_h / 2.0 + off_y * scale;
-                    let label_above  = dot_actual_y > target_h - 30.0;
+                    let mut label_above = dot_actual_y > target_h - 30.0;
+                    let label = strip_total_suffix(&src.name).to_string();
+                    let chars = label.chars().count();
+                    let collides = |above: bool| placed.iter().any(|&(px, py, pc, pa)| {
+                        pa == above
+                            && (py - off_y).abs() < LABEL_H
+                            && (px - off_x).abs() < (pc + chars) as f64 * LABEL_CHAR_W / 2.0
+                    });
+                    let room_above = dot_actual_y > 30.0;
+                    if collides(label_above) && !collides(!label_above)
+                        && (label_above || room_above)
+                    {
+                        label_above = !label_above;
+                    }
+                    placed.push((off_x, off_y, chars, label_above));
                     let class = match (is_sel, label_above) {
                         (true,  true)  => "map-marker selected label-above",
                         (true,  false) => "map-marker selected",
@@ -189,7 +211,6 @@ pub fn SourceMap(
                     let id        = src.id.clone();
                     let on_toggle = on_toggle.clone();
                     let full_name = src.name.clone();
-                    let label     = strip_total_suffix(&src.name).to_string();
                     let style = format!(
                         "left: calc(50% + {:.0}px); top: calc(50% + {:.0}px);",
                         off_x, off_y,

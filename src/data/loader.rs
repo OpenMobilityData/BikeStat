@@ -4,7 +4,7 @@ use std::io::Cursor;
 use chrono::{DateTime, Datelike, LocalResult, NaiveDate, TimeZone, Utc};
 use chrono_tz::America::Montreal as MontrealTz;
 
-use crate::data::sources::{telraam_annotation, vdm_eco_counter_target, MONTREAL_CYCLISTES_URL, MONTREAL_INSTANCE_ALIASES, MONTREAL_LOCATION_FILTER, SOURCE_COLORS};
+use crate::data::sources::{telraam_annotation, vdm_eco_counter_target, MONTREAL_CYCLISTES_URL, MONTREAL_INSTANCE_ALIASES, MONTREAL_INSTANCE_STREETS, MONTREAL_LOCATION_FILTER, SOURCE_COLORS};
 use crate::data::types::{CountRecord, DataSource, LatLon, LoaderType, Modality, Resolution};
 
 // ── CSV helpers ──────────────────────────────────────────────────────────────
@@ -130,6 +130,10 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
             });
             if !ok { continue; }
         }
+        let (rue1, rue2) = MONTREAL_INSTANCE_STREETS.iter()
+            .find(|(i, _)| *i == instance)
+            .map(|(_, (r1, r2))| (r1.to_string(), r2.to_string()))
+            .unwrap_or((rue1, rue2));
 
         let key = (instance.clone(), direction.clone());
         let acc = instances.entry(key).or_insert_with(|| {
@@ -232,7 +236,17 @@ pub fn parse_montreal_cyclistes_csv(text: &str) -> (Vec<DataSource>, Vec<CountRe
     intersection_list.sort_by(|a, b| a.0.cmp(&b.0));
 
     for ((rue1, rue2), members) in intersection_list {
-        if members.len() < 2 { continue; }
+        if members.len() < 2 {
+            // No Total to represent the location, so the lone source stands
+            // for itself (the map draws a marker for the source whose id
+            // equals its group key).
+            for (id, _, _) in &members {
+                if let Some(s) = sources.iter_mut().find(|s| &s.id == id) {
+                    s.group = Some(id.clone());
+                }
+            }
+            continue;
+        }
 
         let total_id = make_total_id(&rue1, &rue2);
         let name = if rue2.is_empty() {
