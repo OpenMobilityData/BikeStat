@@ -2,18 +2,16 @@ use chrono::{DateTime, TimeZone, Utc};
 use crate::data::types::{DataSource, LatLon, LoaderType, Modality};
 
 /// VdM cyclistes CSV, served same-origin.  An hourly cron job on the server
-/// fetches the upstream URL below and atomically replaces this file.  For
+/// (`scripts/refresh-vdm.sh`) rebuilds it from the city's per-year
+/// `cyclistes_<year>.csv` files, pre-filtered to the catalogued streets.  For
 /// local dev, populate `static/data/cyclistes.csv` once with:
 ///
 /// ```bash
-/// curl -fsS \
-///   "https://donnees.montreal.ca/dataset/142ff2e9-7d0a-47d6-b4f6-dfeb97041daf/resource/a8e463ab-d334-4714-81d5-8da0310d80c0/download/cyclistes.csv" \
-///   -o static/data/cyclistes.csv
+/// BIKESTAT_DATA_DIR=static/data ./scripts/refresh-vdm.sh
 /// ```
 ///
-/// When built with `--features unfiltered`, the loader instead pulls the
-/// full unfiltered archive from `data/cyclistes-all.csv`; populate that
-/// file locally with the same curl invocation but a different `-o` target.
+/// When built with `--features unfiltered`, the loader instead pulls an
+/// unfiltered year from `data/cyclistes-all.csv` (see the README).
 #[cfg(not(feature = "unfiltered"))]
 pub const MONTREAL_CYCLISTES_URL: &str = "data/cyclistes.csv";
 #[cfg(feature = "unfiltered")]

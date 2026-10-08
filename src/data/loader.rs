@@ -28,12 +28,24 @@ fn find_col(headers: &[String], name: &str) -> Option<usize> {
     headers.iter().position(|h| h.trim().eq_ignore_ascii_case(name))
 }
 
+/// Parse a cyclistes `periode`.  The legacy rolling `cyclistes.csv` carried a
+/// UTC offset (`2025-11-04 00:00:00-05`); the per-year `cyclistes_<year>.csv`
+/// files drop it and give Montreal local time, with (`2025-11-04 00:00:00`)
+/// or without (`2026-04-02 00:00`) seconds.
 fn parse_montreal_ts(s: &str) -> Option<DateTime<Utc>> {
     let s = s.trim();
     let normalised = if s.len() == 22 { format!("{}:00", s) } else { s.to_string() };
-    DateTime::parse_from_str(&normalised, "%Y-%m-%d %H:%M:%S%:z")
-        .ok()
-        .map(|dt| dt.with_timezone(&Utc))
+    if let Ok(dt) = DateTime::parse_from_str(&normalised, "%Y-%m-%d %H:%M:%S%:z") {
+        return Some(dt.with_timezone(&Utc));
+    }
+    let ndt = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M"))
+        .ok()?;
+    match MontrealTz.from_local_datetime(&ndt) {
+        LocalResult::Single(dt)       => Some(dt.with_timezone(&Utc)),
+        LocalResult::Ambiguous(dt, _) => Some(dt.with_timezone(&Utc)),
+        LocalResult::None             => None, // spring-forward gap
+    }
 }
 
 fn make_total_id(rue1: &str, rue2: &str) -> String {

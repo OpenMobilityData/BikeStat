@@ -28,7 +28,7 @@ Production deployment: https://bikestat.org
 
 | Source | Loader | Cadence |
 |---|---|---|
-| Ville de Montréal `cyclistes.csv` | Server cron pre-filters to catalogued streets and serves the result statically | Hourly |
+| Ville de Montréal cyclistes (`cyclistes_<year>.csv`, 2025+) | Server cron pre-filters each year to catalogued streets and serves the combined result statically | Hourly |
 | Ville de Montréal eco-counters (`comptage_velo_<year>.csv`, 2024+) | Server cron pre-filters each year's CSV to catalogued counter IDs; 15-min rows are summed to hourly in the browser | Hourly |
 | Telraam (legacy S1 + current S2 sensors) | Historical xlsx exports plus a rolling 90-day JSON snapshot fetched from the Level-5 API by a server cron | Hourly |
 | CDN-NDG borough eco-counter | Quarterly xlsx batches obtained via access-to-information requests, loaded statically | Manual on receipt |
@@ -61,7 +61,7 @@ src/
     sidebar.rs        Filter panel (locations, modalities, date presets)
 scripts/
   deploy.sh           trunk build + rsync (excludes cron-managed files)
-  refresh-vdm.sh      Hourly cron: VdM CSV download + street filter
+  refresh-vdm.sh      Hourly cron: VdM yearly cyclistes CSVs + street filter
   refresh-vdm-eco.sh  Hourly cron: VdM eco-counter yearly CSVs + counter-ID filter
   refresh-telraam.sh  Hourly cron: Telraam API JSON snapshot per segment
 static/
@@ -95,12 +95,12 @@ disables `MONTREAL_LOCATION_FILTER`:
 
 ```
 curl -fsSL -A "Mozilla/5.0" \
-  "https://donnees.montreal.ca/dataset/142ff2e9-7d0a-47d6-b4f6-dfeb97041daf/resource/a8e463ab-d334-4714-81d5-8da0310d80c0/download/cyclistes.csv" \
+  "https://donnees.montreal.ca/dataset/142ff2e9-7d0a-47d6-b4f6-dfeb97041daf/resource/c852dec3-f795-4fee-97f1-24c140939e4e/download/cyclistes_2026.csv" \
   -o static/data/cyclistes-all.csv
 trunk serve --features unfiltered
 ```
 
-The file is ~190 MB / 1.47M rows; expect a multi-second parse on load
+The 2026 file is ~200 MB; expect a multi-second parse on load
 and a dense sidebar/legend. Production builds never enable this
 feature, so the code path is compiled out of the deployed wasm.
 
